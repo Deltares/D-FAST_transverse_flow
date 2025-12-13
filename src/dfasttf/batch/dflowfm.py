@@ -10,8 +10,8 @@ from pandas import DataFrame
 from shapely import LineString
 from xugrid import UgridDataArray, UgridDataset
 
-from dfastrbk.src.batch import geometry
-from dfastrbk.src.config import Config, get_output_files
+from dfasttf.batch import geometry
+from dfasttf.config import Config, get_output_files
 
 VARN_FACE_X_BND = "mesh2d_face_x_bnd"
 VARN_FACE_Y_BND = "mesh2d_face_y_bnd"

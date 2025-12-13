@@ -6,14 +6,14 @@ from shapely import LineString
 from tqdm import tqdm
 from xugrid import UgridDataset
 
-from dfastrbk.src.batch import cross_flow, dflowfm, ice
-from dfastrbk.src.batch.dflowfm import (
+from dfasttf.batch import cross_flow, dflowfm, ice
+from dfasttf.batch.dflowfm import (
     Variables,
     clip_simulation_data,
     load_simulation_data,
 )
-from dfastrbk.src.batch.plotting import Plot2D, construct_figure_filename
-from dfastrbk.src.config import Config
+from dfasttf.batch.plotting import Plot2D, construct_figure_filename
+from dfasttf.config import Config
 
 
 def run_analysis(

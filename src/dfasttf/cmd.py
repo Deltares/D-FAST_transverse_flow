@@ -1,10 +1,10 @@
 import logging
 
-from dfastrbk.src.batch.core import preprocess_1d, run_analysis
-from dfastrbk.src.batch.dflowfm import Variables
-from dfastrbk.src.config import Config
+from dfasttf.batch.core import preprocess_1d, run_analysis
+from dfasttf.batch.dflowfm import Variables
+from dfasttf.config import Config
 
-logging.basicConfig(filename="dfastrbk.log", level=logging.INFO)
+logging.basicConfig(filename="dfasttf.log", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
