@@ -3,9 +3,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from dfastrbk.src.batch import operations, plotting, support
-from dfastrbk.src.config import Config
-from dfastrbk.src.kernel import flow
+from dfasttf.batch import operations, plotting, support
+from dfasttf.config import Config
+from dfasttf.kernel import flow
 
 
 def run(

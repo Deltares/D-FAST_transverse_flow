@@ -8,10 +8,10 @@ import xugrid as xu
 from xarray import DataArray
 from xugrid import UgridDataArray
 
-from dfastrbk.src.batch import geometry, plotting, support
-from dfastrbk.src.batch.dflowfm import clip_simulation_data
-from dfastrbk.src.config import Config
-from dfastrbk.src.kernel import froude
+from dfasttf.batch import geometry, plotting, support
+from dfasttf.batch.dflowfm import clip_simulation_data
+from dfasttf.config import Config
+from dfasttf.kernel import froude
 
 
 def run_1d(
