@@ -135,11 +135,10 @@ def save_1d_figures(
     )
 
     outputfiles = []
-    base = f"{section}_profile{profile_index}_transverse_flow"
-    figfile = construct_figure_filename(figdir, base, figext)
+    base = f"{section}_profile{profile_index}_transverse_velocity"
     outputfiles.append((outputdir / base).with_suffix(".xlsx"))
 
-    base = f"{section}_profile{profile_index}_transverse_discharge"
+    base = f"{section}_profile{profile_index}_transverse_flow"
     figfile = construct_figure_filename(figdir, base, figext)
     outputfiles.append((outputdir / base).with_suffix(".xlsx"))
 

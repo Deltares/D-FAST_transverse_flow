@@ -459,7 +459,7 @@ class CrossFlow:
         fig = initialize_figure()
         axs = []
         ax1 = initialize_subplot(
-            fig, 2, 1, 1, self.config.XLABEL, self.config.YLABEL
+            fig, 1, 1, 1, self.config.XLABEL, self.config.YLABEL
         )
         axs.append(ax1)
         ax1.set_ylim(self.config.YLIM)
@@ -516,5 +516,5 @@ class CrossFlow:
             ncols=2,
             borderaxespad=0.0,
         )
-
+        fig.set_figheight(0.5*FIGWIDTH)
         savefig(fig, filename)
