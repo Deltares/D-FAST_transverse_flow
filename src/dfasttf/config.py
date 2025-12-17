@@ -14,6 +14,7 @@ GENERAL_SECTION = "General"
 BOUNDING_BOX_SECTION = "BoundingBox"
 BEDCHANGEFILE_KEY = "BedChangeFile"
 WITHINTERVENTION_KEY = "WithIntervention"
+PROFILELINES_KEY = "ProfileLines"
 
 
 @dataclass
@@ -29,7 +30,7 @@ class Ship:
             length = float(config[reach]["Length"])
             depth = float(config[reach]["Depth"])
         except KeyError as e:
-            raise ValueError(f"Missing key in ships file for reach '{reach}': {e}")
+            raise ValueError(f"Missing key in ships file for reach '{reach}': {e}") from e
         return cls(length=length, depth=depth)
 
 
@@ -105,15 +106,17 @@ class GeneralSettings:
         }
 
         riverkm = None
-        riverkm_file = data.getstring(GENERAL_SECTION, "RiverKM")
-        riverkm = xyc.models.XYCModel.read(riverkm_file, num_columns=3)
+        if "RiverKM" in config[GENERAL_SECTION]:
+            riverkm_file = data.getstring(GENERAL_SECTION, "RiverKM")
+            riverkm = xyc.models.XYCModel.read(riverkm_file, num_columns=3)
 
         profiles_file = None
-        profiles_file = Path(
-            ConfigFileOperations._get_absolute_path_from_relative_path(
-                str(configdir), data.getstring(GENERAL_SECTION, "ProfileLines")
+        if PROFILELINES_KEY in config[GENERAL_SECTION]:
+            profiles_file = Path(
+                ConfigFileOperations._get_absolute_path_from_relative_path(
+                    str(configdir), data.getstring(GENERAL_SECTION, "ProfileLines")
+                )
             )
-        )
 
         bedchangefile = None
         if BEDCHANGEFILE_KEY in config[GENERAL_SECTION]:

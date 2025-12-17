@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import numpy as np
 from pandas import DataFrame
 from shapely import LineString
@@ -41,13 +39,6 @@ def run_analysis(
         raise ValueError(
             f"Unknown plot type {configuration.plotsettings.type}."
         ) from exc
-
-
-def preprocess_1d(configuration: Config) -> tuple[DataFrame, LineString]:
-    prof_line_df = dflowfm.read_profile_lines(Path(configuration.general.profiles_file))
-    riverkm = configuration.general.riverkm
-    return prof_line_df, riverkm
-
 
 def run_1d_analysis(
     configuration: Config,
@@ -144,17 +135,17 @@ def save_1d_figures(
     )
 
     outputfiles = []
-    base = f"{section}_profile{profile_index}_transverse_flow"
-    figfile = construct_figure_filename(figdir, base, figext)
+    base = f"{section}_profile{profile_index}_transverse_velocity"
     outputfiles.append((outputdir / base).with_suffix(".xlsx"))
 
-    base = f"{section}_profile{profile_index}_transverse_discharge"
+    base = f"{section}_profile{profile_index}_transverse_flow"
     figfile = construct_figure_filename(figdir, base, figext)
     outputfiles.append((outputdir / base).with_suffix(".xlsx"))
 
     cross_flow.run(
         profile_data["ucx"],
         profile_data["ucy"],
+        profile_data["h"],
         path_distances,
         angles,
         rkm,
@@ -169,12 +160,11 @@ def run_2d_analysis(
     section: str,
     simulation_data: list[UgridDataset],
     variables: Variables,
-    prof_line_df: DataFrame,
-):
+    prof_line_df: DataFrame | None,
+) -> None:
     """Run 2D Froude number analysis and plotting."""
     labels = ("reference", "intervention", "difference")
 
-    # TODO: this is already done in ice.run_2d:
     waterupliftcorrection = configuration.general.bool_flags["waterupliftcorrection"]
     bedchangecorrection = configuration.general.bool_flags["bedchangecorrection"]
 
@@ -185,34 +175,57 @@ def run_2d_analysis(
         suffix = suffix + "_bedchange"
 
     padding = 1000  # metres
+    profile_line = None
+    if prof_line_df is None or getattr(prof_line_df, "empty", False):
+        # derive bbox: prefer configured bbox, otherwise use dataset extent
+        if configuration.general.bbox is not None:
+            bbox = configuration.general.bbox
+        else:
+            ds0 = simulation_data[0]
+            xs = ds0.ugrid.x.values
+            ys = ds0.ugrid.y.values
+            xmin, xmax = float(xs.min()), float(xs.max())
+            ymin, ymax = float(ys.min()), float(ys.max())
+            bbox = [xmin - padding, xmax + padding, ymin - padding, ymax + padding]
 
-    ## TODO: this is only built in for the report but depends on profile lines,
-    # which should not be required for 2D analysis
-    for geom_idx, profile_line in enumerate(
-        tqdm(prof_line_df.geometry, desc="geometry", position=0, leave=True)
-    ):
-        bounds = profile_line.bounds
-        bbox = [
-            bounds[0] - padding,
-            bounds[2] + padding,
-            bounds[1] - padding,
-            bounds[3] + padding,
-        ]
-
-        water_depth = [
-            clip_simulation_data(ds[variables.h], bbox) for ds in simulation_data
-        ]
-        flow_velocity = [
-            clip_simulation_data(ds[variables.uc], bbox) for ds in simulation_data
-        ]
+        water_depth = [clip_simulation_data(ds[variables.h], bbox) for ds in simulation_data]
+        flow_velocity = [clip_simulation_data(ds[variables.uc], bbox) for ds in simulation_data]
         figfiles = [
             construct_figure_filename(
                 configuration.plotsettings.options.figure_save_directory,
-                f"{section}_{label}_profile{geom_idx}_Froude{suffix}",
+                f"{section}_{label}_Froude{suffix}",
                 configuration.plotsettings.options.plot_extension,
             )
             for label in labels
         ]
-        # TODO: make riverkm optional
-        if water_depth[0].size != 0:
-            ice.run_2d(water_depth, flow_velocity, configuration, figfiles)
+        if water_depth and getattr(water_depth[0], "size", 0) != 0:
+            ice.run_2d(water_depth, flow_velocity, configuration, profile_line, figfiles)
+    else:
+        for geom_idx, profile_line in enumerate(
+            tqdm(prof_line_df.geometry, desc="geometry", position=0, leave=True)
+        ):
+            bounds = profile_line.bounds
+            bbox = [
+                bounds[0] - padding,
+                bounds[2] + padding,
+                bounds[1] - padding,
+                bounds[3] + padding,
+            ]
+
+            water_depth = [
+                clip_simulation_data(ds[variables.h], bbox) for ds in simulation_data
+            ]
+            flow_velocity = [
+                clip_simulation_data(ds[variables.uc], bbox) for ds in simulation_data
+            ]
+            figfiles = [
+                construct_figure_filename(
+                    configuration.plotsettings.options.figure_save_directory,
+                    f"{section}_{label}_profile{geom_idx}_Froude{suffix}",
+                    configuration.plotsettings.options.plot_extension,
+                )
+                for label in labels
+            ]
+
+            if water_depth[0].size != 0:
+                ice.run_2d(water_depth, flow_velocity, configuration, profile_line, figfiles)
