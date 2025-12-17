@@ -6,9 +6,9 @@ import numpy as np
 import xugrid as xu
 from pandas import DataFrame
 
-# import pandas as pd
 from shapely import LineString
 from xugrid import UgridDataArray, UgridDataset
+from dfastbe.io.data_models import LineGeometry
 
 from dfasttf.batch import geometry
 from dfasttf.config import Config, get_output_files
@@ -263,7 +263,7 @@ def _order_intersection_points(
     profile_distances: Distances along the profile line.
     segment_idx: Segment indices of the profile line.
     face_idx: Face indices of mesh.
-    river_km: x,y coordinates of river kilometers (rkm)
+    river_km: Mx3 array with x, y, and chainage values (river km)
 
     Returns:
     tuple[np.ndarray, np.ndarray, np.ndarray]: Grouped rkm, segment indices, and face indices.
@@ -348,8 +348,9 @@ def convert_to_rkm(intersects, river_km, conversion_factor=1):
     """Converts an array of points to the corresponding rkm values
 
     Parameters:
-    intersects: intersection points
-    river_km: chainage values
+    intersects: Nx2 array of intersection points 
+    river_km: Mx3 array with x, y, and chainage values (river km)
     conversion_factor: optional, to convert km to another unit (default = 1)"""
-    rkm = geometry.project_km_on_line(intersects, river_km) * conversion_factor
+    intersects_line = LineGeometry(intersects)
+    rkm = intersects_line.intersect_with_line(river_km) * conversion_factor
     return rkm

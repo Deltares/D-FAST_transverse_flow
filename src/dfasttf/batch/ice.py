@@ -3,7 +3,6 @@ from pathlib import Path
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-import xarray as xr
 import xugrid as xu
 from xarray import DataArray
 from xugrid import UgridDataArray
@@ -92,23 +91,22 @@ def run_2d(
     water_depth: list[DataArray],
     flow_velocity: list[DataArray],
     configuration: Config,
+    profile_line: gpd.GeoSeries | None,
     filenames: list[Path],
 ) -> None:
 
     riverkm = configuration.general.riverkm
-    if configuration.general.profiles_file != "":
-        profile_lines = gpd.read_file(Path(configuration.general.profiles_file))
 
     froude_number = []
     for idx, (h, u) in enumerate(zip(water_depth, flow_velocity)):
         fr = froude.calculate_froude_number(h, u)
         fr = correct_model_results(fr, h, configuration)
         froude_number.append(fr)
-        plotting.Ice2D().create_map(fr, riverkm, profile_lines, filenames[idx])
+        plotting.Ice2D().create_map(fr, riverkm, profile_line, filenames[idx])
 
     if len(froude_number) > 1:
         plotting.Ice2D().create_diff_map(
-            froude_number[0], froude_number[1], riverkm, profile_lines, filenames[2]
+            froude_number[0], froude_number[1], riverkm, profile_line, filenames[2]
         )
 
 
