@@ -9,7 +9,7 @@ packages = [{ include = "dfasttf", from= "src"}]
 [tool.poetry.dependencies]
 python = "~3.11.0"
 dfastio = { git = "https://github.com/Deltares/D-FAST_Commons.git", rev = "0.1.0" }
-d-fast-bank-erosion = { git = "https://github.com/Deltares/D-FAST_Bank_Erosion.git", branch = "build/bump-up-versions" }
+d-fast-bank-erosion = { git = "https://github.com/Deltares/D-FAST_Bank_Erosion.git", branch = "master" }
 dfastmi = { git = "https://github.com/Deltares/D-FAST_Morphological_Impact", branch = "build/bump-up-versions"}
 tqdm = "^4.67.1"
 xugrid = "^0.14.3"
