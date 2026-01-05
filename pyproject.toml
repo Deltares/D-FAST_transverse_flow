@@ -79,9 +79,6 @@ multi_line_output = 3
 name = "cz_conventional_commits"
 version_provider = "poetry"
 tag_format = "$version"
-version_files = [
-    "src/dfastbe/__init__.py:__version__",
-]
 changelog_file = "docs/mkdocs/change-log.md"
 update_changelog_on_bump = true
 changelog_incremental = true
