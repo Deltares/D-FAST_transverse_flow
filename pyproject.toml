@@ -42,6 +42,11 @@ notebook = "<7.0"
 
 
 
+include = [
+    { path = "src/dfasttf/data/**", format = "wheel" },
+    { path = "src/dfasttf/data/**", format = "sdist" },
+]
+
 [tool.poetry.scripts]
 dfasttf = "dfasttf.cli:main"
 
