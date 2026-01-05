@@ -1,6 +1,6 @@
 import sys
 import argparse
-from dfasttf import cmd
+from dfasttf.cmd import run
 from dfasttf import __version__
 
 
@@ -46,13 +46,20 @@ def parse_arguments() -> tuple:
     parser.set_defaults(reduced_output=False)
     args = parser.parse_args()
 
-    config_file = args.__dict__["config"]
-    rivers_file = args.__dict__["rivers"]
-    ships_file = args.__dict__["ships"]
+    return args
+
+
+def validate_args(args):
+    config_file = args.config
+    rivers_file = args.rivers
+    ships_file = args.ships
+
     if config_file == "unspecified":
         config_file = "examples/c01 - Waal/config.ini"
+
     if rivers_file == "unspecified":
         rivers_file = "Dutch_rivers_v3.ini"
+
     if ships_file == "unspecified":
         # TODO: fix this path
         ships_file = "dfasttf/src/ship_dimensions.ini"
@@ -60,8 +67,9 @@ def parse_arguments() -> tuple:
     return config_file, rivers_file, ships_file
 
 def main(argv: list[str] | None = None) -> int:
-    config_file, rivers_file, ships_file = parse_arguments()
-    cmd.run(config_file, ships_file)
+    args = parse_arguments()
+    config_file, rivers_file, ships_file = validate_args(args)
+    run(config_file, ships_file)
 
     return 0
 
