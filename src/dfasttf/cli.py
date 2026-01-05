@@ -1,6 +1,7 @@
 import sys
 import argparse
-import dfasttf.cmd
+from dfasttf import cmd
+from dfasttf import __version__
 
 
 def parse_arguments() -> tuple:
@@ -20,6 +21,9 @@ def parse_arguments() -> tuple:
     """
 
     parser = argparse.ArgumentParser(description="D-FAST-RBK")
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
+    )
 
     parser.add_argument(
         "--config",
@@ -57,7 +61,7 @@ def parse_arguments() -> tuple:
 
 def main(argv: list[str] | None = None) -> int:
     config_file, rivers_file, ships_file = parse_arguments()
-    dfasttf.cmd.run(config_file, ships_file)
+    cmd.run(config_file, ships_file)
 
     return 0
 
