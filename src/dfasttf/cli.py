@@ -61,9 +61,6 @@ def validate_args(args):
     rivers_file = args.rivers
     ships_file = args.ships
 
-    if config_file == "unspecified":
-        config_file = "examples/c01 - Waal/config.ini"
-
     return config_file, rivers_file, ships_file
 
 def main(argv: list[str] | None = None) -> int:
