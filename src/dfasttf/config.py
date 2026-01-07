@@ -39,8 +39,8 @@ class Config:
     Loads and manages configuration for D-FAST analysis.
     """
 
-    def __init__(self, config_file: str, ships_file: str):
-        configfile = Path(config_file).resolve()
+    def __init__(self, config_file: Path, ships_file: Path):
+        configfile = config_file.resolve()
         self.configdir = configfile.parent
 
         self.config = ConfigFileOperations.load_configuration_file(str(config_file))
@@ -52,7 +52,7 @@ class Config:
         )
         self.outputdir = _get_output_dir(str(self.configdir), True, self.data)
 
-        shipsfile = Path(ships_file).resolve()
+        shipsfile = ships_file.resolve()
         self.ship_params = Ship.from_config(self.general.reach, shipsfile)
 
         self.plotsettings = PlotSettings(self.configdir, self.data)
