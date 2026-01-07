@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "d-fast-traverse-flow"
-version = "0.0.0"
+version = "0.1.0"
 description = "A tool to perform a bank erosion analysis based on a number of D-Flow FM simulations."
 authors = ["Stichting Deltares <delft3d.support@deltares.nl>"]
 readme = "README.md"
@@ -80,7 +80,7 @@ version_provider = "poetry"
 tag_format = "$version"
 changelog_file = "docs/mkdocs/change-log.md"
 update_changelog_on_bump = true
-changelog_incremental = false
+changelog_incremental = true
 version_scheme = "pep440"
 
 
