@@ -11,6 +11,7 @@ from dfasttf.kernel import flow
 def run(
     ucx: list[np.ndarray],
     ucy: list[np.ndarray],
+    water_depth: list[np.ndarray],
     path_distances: np.ndarray,
     profile_angles: np.ndarray,
     rkm: np.ndarray,
@@ -24,8 +25,10 @@ def run(
         x-component of flow velocity
     ucy: (n,)
         y-component of flow velocity
+    water_depth: (n,)
+        water depth at intersection points
     path_distances: (n,)
-        distance between intersection points
+        cumulative distance between intersection points
     profile_angles: (n,)
         angle of profile line segments
     rkm: (n,)
@@ -38,11 +41,12 @@ def run(
     rkm_km = rkm / 1000
 
     # Transverse velocity:
-    COLUMN_LABELS = ("afstand (rkm)", "dwarsstroomsnelheid (m/s)")
+    COLUMN_LABELS = ("raai (rkm)", "dwarsstroomsnelheid (m/s)")
     transverse_velocity = []
-    for x, y in zip(ucx, ucy):
-        cross_flow = flow.trans_velocity(x, y, profile_angles)
-        transverse_velocity.append(cross_flow.compute())
+    for x, y, wd in zip(ucx, ucy, water_depth):
+        trans_flow = flow.trans_velocity(x, y, profile_angles)
+        repr_trans_flow = flow.repr_trans_velocity(wd, trans_flow, path_distances, configuration.ship_params.depth)
+        transverse_velocity.append(repr_trans_flow)
 
     data = [
         transverse_velocity[0],

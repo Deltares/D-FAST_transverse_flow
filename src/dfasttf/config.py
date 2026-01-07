@@ -14,6 +14,7 @@ GENERAL_SECTION = "General"
 BOUNDING_BOX_SECTION = "BoundingBox"
 BEDCHANGEFILE_KEY = "BedChangeFile"
 WITHINTERVENTION_KEY = "WithIntervention"
+PROFILELINES_KEY = "ProfileLines"
 
 
 @dataclass
@@ -29,7 +30,7 @@ class Ship:
             length = float(config[reach]["Length"])
             depth = float(config[reach]["Depth"])
         except KeyError as e:
-            raise ValueError(f"Missing key in ships file for reach '{reach}': {e}")
+            raise ValueError(f"Missing key in ships file for reach '{reach}': {e}") from e
         return cls(length=length, depth=depth)
 
 
@@ -38,8 +39,8 @@ class Config:
     Loads and manages configuration for D-FAST analysis.
     """
 
-    def __init__(self, config_file: str, ships_file: str):
-        configfile = Path(config_file).resolve()
+    def __init__(self, config_file: Path, ships_file: Path):
+        configfile = config_file.resolve()
         self.configdir = configfile.parent
 
         self.config = ConfigFileOperations.load_configuration_file(str(config_file))
@@ -51,7 +52,7 @@ class Config:
         )
         self.outputdir = _get_output_dir(str(self.configdir), True, self.data)
 
-        shipsfile = Path(ships_file).resolve()
+        shipsfile = ships_file.resolve()
         self.ship_params = Ship.from_config(self.general.reach, shipsfile)
 
         self.plotsettings = PlotSettings(self.configdir, self.data)
@@ -105,15 +106,17 @@ class GeneralSettings:
         }
 
         riverkm = None
-        riverkm_file = data.getstring(GENERAL_SECTION, "RiverKM")
-        riverkm = xyc.models.XYCModel.read(riverkm_file, num_columns=3)
+        if "RiverKM" in config[GENERAL_SECTION]:
+            riverkm_file = data.getstring(GENERAL_SECTION, "RiverKM")
+            riverkm = xyc.models.XYCModel.read(riverkm_file, num_columns=3)
 
         profiles_file = None
-        profiles_file = Path(
-            ConfigFileOperations._get_absolute_path_from_relative_path(
-                str(configdir), data.getstring(GENERAL_SECTION, "ProfileLines")
+        if PROFILELINES_KEY in config[GENERAL_SECTION]:
+            profiles_file = Path(
+                ConfigFileOperations._get_absolute_path_from_relative_path(
+                    str(configdir), data.getstring(GENERAL_SECTION, "ProfileLines")
+                )
             )
-        )
 
         bedchangefile = None
         if BEDCHANGEFILE_KEY in config[GENERAL_SECTION]:

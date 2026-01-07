@@ -7,7 +7,6 @@ import numpy as np
 import shapely.plotting
 import xarray as xr
 import xugrid as xu
-from geopandas import GeoDataFrame
 from matplotlib import ticker
 from matplotlib.axes import Axes
 from matplotlib.collections import LineCollection
@@ -19,12 +18,7 @@ from shapely import LineString
 from xarray import DataArray
 
 from dfastmi.batch.plotting import chainage_markers, savefig
-
-# from dfastmi.batch.PlotOptions import PlotOptions
 from dfasttf.config import Config
-
-# import contextily as ctx
-# from xyzservices import TileProvider
 
 FIGWIDTH: float = 5.748  # Deltares report width
 TEXTFONT = "arial"
@@ -38,7 +32,7 @@ def initialize_figure(figwidth: Optional[float] = FIGWIDTH) -> Figure:
     font = {"family": TEXTFONT, "size": TEXTSIZE}
     plt.rc("font", **font)
     fig = plt.figure(layout="constrained")
-    # fig.set_figwidth(figwidth)
+    fig.set_figwidth(figwidth)
     return fig
 
 
@@ -55,7 +49,7 @@ def difference_plot(ax: Axes, ylabel: str, color: str):
     secax_y2 = ax.twinx()
     secax_y2.set_ylabel(ylabel)
     secax_y2.yaxis.label.set_color(color)
-    secax_y2.tick_params(color=color, labelcolor=color)
+    secax_y2.tick_params(color=color, labelcolor=color, which='both')
     secax_y2.spines["right"].set_color(color)
     return secax_y2
 
@@ -76,120 +70,13 @@ def plot_chainage_markers(riverkm: LineString, ax: Axes):
     filtered_coords = np.array([coord for coord in riverkm.coords if coord[2] % 1 == 0])
     chainage_markers(filtered_coords, ax, scale=1, ndec=0)
 
-
-def align_twinx_grid_centered(
-    primary,
-    secondary,
-    *,
-    center=0.0,
-    keep_symmetric=True,
-    add_centerline=True,
-    label_formatter=None,
-    _eps=1e-12,
-):
-    """
-    Align secondary-axis (right) ticks to the primary (left) axis horizontal gridlines,
-    and (optionally) keep the secondary axis symmetric around `center` (default: 0).
-
-    Parameters
-    ----------
-    primary : matplotlib.axes.Axes
-        Left axis.
-    secondary : matplotlib.axes.Axes
-        Right axis, created with twinx().
-    center : float
-        Value the secondary axis should be centered on (default: 0).
-    keep_symmetric : bool
-        If True, force secondary ylim to be [center - M, center + M], where
-        M = max(|ylow - center|, |yhigh - center|).
-    add_centerline : bool
-        If True, draws/updates a dashed horizontal line at secondary==center
-        (mapped into primary coordinates) so the midline is visible even if
-        the primary has no tick there.
-    label_formatter : callable or None
-        Optional function to format secondary tick labels. Receives float -> str.
-    _eps : float
-        Internal epsilon to avoid divide-by-zero loops.
-    """
-    state = {"centerline": None, "in_update": False}
-
-    def update(_evt):
-        if state["in_update"]:
-            return
-        state["in_update"] = True
-        try:
-            # Current limits
-            y1_lo, y1_hi = primary.get_ylim()
-            y2_lo, y2_hi = secondary.get_ylim()
-
-            # Ensure secondary is symmetric about `center`
-            if keep_symmetric:
-                span_lo = abs(y2_lo - center)
-                span_hi = abs(y2_hi - center)
-                M = max(span_lo, span_hi, _eps)
-                new_lo, new_hi = center - M, center + M
-                # Only set if it actually changes to avoid endless callbacks
-                if (abs(new_lo - y2_lo) > _eps) or (abs(new_hi - y2_hi) > _eps):
-                    secondary.set_ylim(new_lo, new_hi)
-                    y2_lo, y2_hi = new_lo, new_hi
-
-            # Protect against zero primary span
-            y1_span = y1_hi - y1_lo
-            if abs(y1_span) < _eps:
-                return
-
-            # Linear mapping primary -> secondary: y2 = a*y1 + b
-            a = (y2_hi - y2_lo) / y1_span
-            b = y2_lo - a * y1_lo
-
-            # Align secondary ticks to primary gridlines
-            yt1 = primary.get_yticks()
-            yt2 = a * yt1 + b
-            secondary.set_yticks(yt2)
-            if label_formatter is not None:
-                secondary.set_yticklabels([label_formatter(val) for val in yt2])
-
-            # Grid: only on primary (so lines are shared across both)
-            primary.set_axisbelow(True)
-            primary.grid(True, axis="y")
-            secondary.grid(False)
-
-            # Optional: visible centerline at secondary==center
-            if add_centerline and abs(a) > _eps:
-                y1_at_center = (center - b) / a
-                if state["centerline"] is None:
-                    # One line that we update on every callback
-                    state["centerline"] = primary.axhline(
-                        y1_at_center, color="black", ls="--", lw=1
-                    )
-                else:
-                    state["centerline"].set_ydata([y1_at_center, y1_at_center])
-                # Hide line if center is outside current primary limits (e.g., zoom)
-                vis = (
-                    min(y1_lo, y1_hi) - _eps <= y1_at_center <= max(y1_lo, y1_hi) + _eps
-                )
-                state["centerline"].set_visible(vis)
-
-            primary.figure.canvas.draw_idle()
-        finally:
-            state["in_update"] = False
-
-    # Recompute whenever y-lims change (zoom/pan/autoscale)
-    primary.callbacks.connect("ylim_changed", update)
-    secondary.callbacks.connect("ylim_changed", update)
-    update(None)
-
-
-# def add_satellite_image(ax: Axes, background_image: TileProvider):
-#     ctx.add_basemap(ax=ax, source=background_image, crs=CRS, attribution=False, zorder=-1)
-
-
 @dataclass
 class Plot1DConfig:
-    XLABEL: str = "afstand [rivierkilometer]"
-    COLORS = ("k", "b", "r")  # reference, intervention, difference
-    LABELS = ["Referentie", "Plansituatie"]
-
+    XLABEL: str = "raai km"
+    DELTARES_BLUE = "#0D38DF"
+    DELTARES_DARKGREEN = "#00B389"
+    COLORS = ("k", DELTARES_BLUE, DELTARES_DARKGREEN)  # reference, intervention, difference
+    LABELS = ["Referentie", "Plansituatie", "Verschil"]
 
 @dataclass
 class Plot2D:
@@ -254,19 +141,24 @@ def construct_figure_filename(figdir: Path, base: str, extension: str) -> Path:
 
 @dataclass
 class FlowfieldConfig:
-    VELOCITY_YLABEL: str = "stroomsnelheid\nmagnitude" + r" [$m/s$]"
-    VELOCITY_DIFF_YLABEL: str = "verschil plansituatie\n-referentie" + r" [$m/s$]"
-    VELOCITY_YMIN: float = 0.0
-    ANGLE_YTICKS = ticker.FixedLocator(list(np.arange(-90, 91, 22.5)))
-    ANGLE_PRIMARY_YLABEL: str = "stromingshoek t.o.v.\nprofiellijn" + r" [$graden$]"
+    VELOCITY_YLABEL: str = "stroomsnelheid\nmagnitude" + r" [m/s]"
+    VELOCITY_DIFF_YLABEL: str = "verschil plansituatie\n-referentie" + r" [m/s]"
+    VELOCITY_YLIM: tuple = (0., 2.0)
+    VELOCITY_YTICKS_MAJOR: float = 0.4
+    VELOCITY_YTICKS_MINOR: float = 0.1
+    ANGLE_YTICKS_MAJOR: float = 30.
+    ANGLE_YTICKS_MINOR: float = 10.
+    ANGLE_YLIM: tuple = (-90., 90.)
     # ANGLE_SECONDARY_YLABEL: str = r'stromingshoek [richting]'
-    ANGLE_DIFF_YLABEL: str = "verschil plansituatie\n-referentie" + r" [$graden$]"
+    ANGLE_PRIMARY_YLABEL: str = "stromingshoek t.o.v.\nprofiellijn" + r" [graden]"
+    ANGLE_DIFF_YLABEL: str = "verschil plansituatie\n-referentie" + r" [graden]"
     # ANGLE_SECONDARY_YTICKLABELS = ticker.FixedFormatter(['Z','ZW','W','NW','N','NO','O','ZO','Z'])
-
+    FRACTION: float = 5.
 
 @dataclass
 class FroudeConfig:
     legend_title = "Froude getal"
+    profile_line_color: str = "green"
 
     class Abs:
         colorbar_label: str = "Froude getal"
@@ -294,7 +186,7 @@ class Ice2D:
         self,
         data: DataArray,
         riverkm: LineString,
-        profile_line_df: GeoDataFrame,
+        profile_line: LineString | None,
         filename: Path,
     ) -> None:
         fig, ax = Plot2D().initialize_map()
@@ -314,7 +206,8 @@ class Ice2D:
         )
         ax = Plot2D().modify_axes(ax)
         plot_chainage_markers(riverkm, ax)
-        profile_line_df.plot(ax=ax, linewidth=1, color="green")
+        if profile_line is not None:
+            shapely.plotting.plot_line(profile_line, ax=ax, add_points=False, color=FroudeConfig.profile_line_color)
         savefig(fig, filename)
 
     def create_diff_map(
@@ -322,7 +215,7 @@ class Ice2D:
         ref_data: xr.DataArray,
         variant_data: xr.DataArray,
         riverkm: LineString,
-        profile_line_df: GeoDataFrame,
+        profile_line: LineString | None,
         filename: Path,
     ) -> None:
         plt.close("all")
@@ -364,7 +257,8 @@ class Ice2D:
         lgd.set_title(FroudeConfig.legend_title)
         ax.grid(True)
         plot_chainage_markers(riverkm, ax)
-        profile_line_df.plot(ax=ax, linewidth=0.5, color="black")
+        if profile_line is not None:
+            shapely.plotting.plot_line(profile_line, ax=ax, add_points=False, color=FroudeConfig.profile_line_color)
         savefig(fig, filename)
 
     def _plot_diff_map(
@@ -419,7 +313,9 @@ class Ice1D:
         Plot the velocity magnitude.
         """
         plot_variable(ax, distance, velocity, color)
-        # ax.set_ylim(bottom=FlowfieldConfig.VELOCITY_YMIN)
+        ax.set_ylim(FlowfieldConfig.VELOCITY_YLIM)
+        ax.yaxis.set_major_locator(ticker.MultipleLocator(FlowfieldConfig.VELOCITY_YTICKS_MAJOR))
+        ax.yaxis.set_minor_locator(ticker.MultipleLocator(FlowfieldConfig.VELOCITY_YTICKS_MINOR))
         return ax
 
     def plot_velocity_angle(
@@ -429,6 +325,9 @@ class Ice1D:
         Plot the velocity angle in a separate subplot.
         """
         plot_variable(ax, distance, angle, color)
+        ax.set_ylim(FlowfieldConfig.ANGLE_YLIM)
+        ax.yaxis.set_major_locator(ticker.MultipleLocator(FlowfieldConfig.ANGLE_YTICKS_MAJOR))
+        ax.yaxis.set_minor_locator(ticker.MultipleLocator(FlowfieldConfig.ANGLE_YTICKS_MINOR))
         return ax
 
     # def angle_direction(self, ax: Axes):
@@ -465,6 +364,7 @@ class Ice1D:
             ax2 = self.plot_velocity_angle(ax2, distance, a, Plot1DConfig.COLORS[i])
 
         axs_diff = []
+        fraction = FlowfieldConfig.FRACTION
         if len(velocity) > 1:
             for ax, data, ylabel in [
                 (ax1, velocity[1] - velocity[0], FlowfieldConfig.VELOCITY_DIFF_YLABEL),
@@ -472,28 +372,25 @@ class Ice1D:
             ]:
                 ax_diff = difference_plot(ax, ylabel, Plot1DConfig.COLORS[-1])
                 plot_variable(ax_diff, distance, data, Plot1DConfig.COLORS[-1])
-                yabs_max = abs(max(ax_diff.get_ylim(), key=abs))
-                ax_diff.set_ylim(ymin=-yabs_max, ymax=yabs_max)
+                ax_diff.set_ylim(-ax.get_ylim()[1] / fraction, ax.get_ylim()[1] / fraction)
                 axs_diff.append(ax_diff)
 
-        # Align gridlines and keep secondary centered at 0
-        for primary_axis, secondary_axis in zip([ax1, ax2], axs_diff):
-            align_twinx_grid_centered(
-                primary_axis,
-                secondary_axis,
-                center=0.0,
-                keep_symmetric=True,
-                add_centerline=True,
-            )
+            axs_diff[0].yaxis.set_major_locator(ticker.MultipleLocator(FlowfieldConfig.VELOCITY_YTICKS_MAJOR / fraction))
+            axs_diff[1].yaxis.set_major_locator(ticker.MultipleLocator(FlowfieldConfig.ANGLE_YTICKS_MAJOR / fraction))
 
         for ax in [ax1, ax2]:
             ax1 = modify_axes(ax1, XMAJORTICK)
             ax2 = modify_axes(ax2, XMAJORTICK)
             if configuration.general.bool_flags["invertxaxis"]:
                 invert_xaxis(ax)
-        ax2.yaxis.set_major_locator(FlowfieldConfig.ANGLE_YTICKS)
-        ax2.set_ylim(-90, 90)
-        # ax2.axhline(0,color='black',ls='--')
+            ax.grid(visible=True, which="major", linestyle="-")
+            ax.grid(
+                visible=True,
+                which="minor",
+                axis="y",
+                linestyle="--",
+                color="lightgrey"
+            )
 
         ax1.legend(
             Plot1DConfig.LABELS,
@@ -508,9 +405,13 @@ class Ice1D:
 @dataclass
 class CrossFlowConfig:
     XLABEL = Plot1DConfig.XLABEL
-    YLABEL: str = "dwarsstroom-\nsnelheid" + r" [$m/s$]"
-    DIFF_YLABEL: str = "verschil in dwars-\nstroomsnelheid" + r" [$m/s$]"
-
+    YLABEL: str = "representatieve dwars-\nstroomsnelheid" + r" [m/s]"
+    DIFF_YLABEL: str = FlowfieldConfig.VELOCITY_DIFF_YLABEL
+    CRIT_LABEL: str = "Lokaal criterium"
+    YLIM: tuple = (-0.3, 0.3)
+    FRACTION: int = 3
+    YTICKS_MAJOR = 0.15
+    YTICKS_MINOR = 0.05
 
 class CrossFlow:
     def __init__(self, config: CrossFlowConfig = CrossFlowConfig()):
@@ -519,8 +420,8 @@ class CrossFlow:
     def plot_discharge(
         self,
         ax: Axes,
-        xy_segment: list[tuple],
-        crit_values: list,
+        xy_segments: list[list[tuple]],
+        crit_values: list[np.ndarray],
     ) -> Optional[LineCollection]:
         """
         Calculate and plot perpendicular discharge according to RBK specifications,
@@ -530,19 +431,18 @@ class CrossFlow:
             A matplotlib Line2D object representing the criteria line, or None if no data was plotted.
         """
         crit_handle = None
-
-        for (xi, yi), crit_value in zip(xy_segment, crit_values):
-            # TODO: fix fill between not filling in everything
+        xy_segments = xy_segments[-1]
+        crit_values = crit_values[-1]
+        
+        for (xi, yi), crit_value in zip(xy_segments, crit_values):
             ax.fill_between(xi, yi, color="lightgrey", interpolate=True)
-            ax.axvline(xi[0], color="lightgrey", lw=0.5, ls="--")
-            ax.axvline(xi[-1], color="lightgrey", lw=0.5, ls="--")
 
             # positive criterium:
             crit_handle = ax.hlines(
-                crit_value, xi[0], xi[-1], color="red", lw=1, ls="-"
+                crit_value, xi[0], xi[-1], color='red', lw=1, ls="-"
             )
             # negative criterium:
-            ax.hlines(-crit_value, xi[0], xi[-1], color="red", lw=1, ls="-")
+            ax.hlines(-crit_value, xi[0], xi[-1], color='red', lw=1, ls="-")
 
         return crit_handle
 
@@ -559,42 +459,39 @@ class CrossFlow:
         fig = initialize_figure()
         axs = []
         ax1 = initialize_subplot(
-            fig, len(transverse_velocity), 1, 1, self.config.XLABEL, self.config.YLABEL
+            fig, 1, 1, 1, self.config.XLABEL, self.config.YLABEL
         )
         axs.append(ax1)
+        ax1.set_ylim(self.config.YLIM)
 
-        crit_handle = self.plot_discharge(ax1, xy_segments[-1], crit_values[-1])
+        crit_handle = self.plot_discharge(ax1, xy_segments, crit_values)
 
         lines = []
         for i, v in enumerate(transverse_velocity):
             (line,) = plot_variable(ax1, distance, v, Plot1DConfig.COLORS[i])
             lines.append(line)
 
+        fraction = self.config.FRACTION
         if len(transverse_velocity) > 1:
-            ax2 = initialize_subplot(
-                fig, 2, 1, 2, self.config.XLABEL, CrossFlowConfig.DIFF_YLABEL
-            )
-            plot_variable(
-                ax2, distance, transverse_velocity[1] - transverse_velocity[0]
+            ax2 = difference_plot(ax1, CrossFlowConfig.DIFF_YLABEL, Plot1DConfig.COLORS[-1])
+            data = transverse_velocity[1] - transverse_velocity[0]
+            ax2.set_ylim([y / fraction for y in ax1.get_ylim()])
+            (diff,) = plot_variable(
+                ax2, distance, data, color=Plot1DConfig.COLORS[-1]
             )
             axs.append(ax2)
 
-        for ax in axs:
-            modify_axes(ax, XMAJORTICK)
-            yabs_max = abs(max(ax.get_ylim(), key=abs))
-            ax.set_ylim(ymin=-yabs_max, ymax=yabs_max)
-            ax.axhline(0, color="black", ls="--")
-            if inverse_xaxis:
-                invert_xaxis(ax)
-            ax.grid(visible=True, which="major", linestyle="-")
-            ax.grid(
-                visible=True,
-                which="minor",
-                axis="y",
-                linestyle="--",
-                color="lightgrey",
-                lw=0.5,
-            )
+        modify_axes(ax1, XMAJORTICK)
+        if inverse_xaxis:
+            invert_xaxis(ax1)
+        ax1.grid(visible=True, which="major", linestyle="-")
+        ax1.grid(
+            visible=True,
+            which="minor",
+            axis="y",
+            linestyle="--",
+            color="lightgrey"
+        )
 
         # Combine lines and crit_handle, filtering out None
         handles = [*lines]
@@ -602,17 +499,22 @@ class CrossFlow:
 
         if crit_handle is not None:
             handles.append(crit_handle)
-            labels.append("criteria")
+            labels.append(CrossFlowConfig.CRIT_LABEL)
 
-        ax1.yaxis.set_major_locator(ticker.MultipleLocator(0.15))
-        ax1.yaxis.set_minor_locator(ticker.MultipleLocator(0.05))
+        ax1.yaxis.set_major_locator(ticker.MultipleLocator(CrossFlowConfig.YTICKS_MAJOR))
+        ax1.yaxis.set_minor_locator(ticker.MultipleLocator(CrossFlowConfig.YTICKS_MINOR))
+        if len(transverse_velocity) > 1:
+            ax2.yaxis.set_major_locator(ticker.MultipleLocator(CrossFlowConfig.YTICKS_MAJOR / fraction))
+            ax2.yaxis.set_minor_locator(ticker.MultipleLocator(CrossFlowConfig.YTICKS_MINOR / fraction))
+            handles.append(diff)
+            labels.append(Plot1DConfig.LABELS[-1])
         ax1.legend(
             handles,
             labels,
             bbox_to_anchor=(0.0, 1.02, 1.0, 0.102),
             loc="lower left",
-            ncols=3,
+            ncols=2,
             borderaxespad=0.0,
         )
-
+        fig.set_figheight(0.5*FIGWIDTH)
         savefig(fig, filename)

@@ -3,10 +3,6 @@ from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
-import pandas
-import shapely
-from shapely import LineString
-
 
 def vector_angle(u0: np.ndarray, v0: np.ndarray) -> np.ndarray:
     return np.degrees(np.arctan2(v0, u0))
@@ -93,68 +89,6 @@ def find_distances_to_points(line_coords: np.ndarray, new_points: np.ndarray):
     return profile_distances, segment_indices
 
 
-def read_xyc(filepath: Path, num_columns: int = 2) -> shapely.geometry.LineString:
-    """
-    Adapted from D-FAST BE: io.read_xyc()
-    Read lines from a file.
-
-    Arguments
-    ---------
-    filepath : Path
-        Name of the file to be read.
-    num_columns : int
-        Number of columns to be read (2 or 3)
-
-    Returns
-    -------
-    L : shapely.geometry.linestring.LineStringAdapter
-        Line strings.
-    """
-    if not filepath.exists():
-        raise FileNotFoundError(f"File not found: {filepath}")
-
-    if filepath.suffix.lower() == ".xyc":
-        if num_columns == 3:
-            column_names = ["Val", "X", "Y"]
-        else:
-            column_names = ["X", "Y"]
-        point_coordinates = pandas.read_csv(
-            filepath, names=column_names, skipinitialspace=True, sep=r"\s+"
-        )
-        num_points = len(point_coordinates.X)
-        x = point_coordinates.X.to_numpy().reshape((num_points, 1))
-        y = point_coordinates.Y.to_numpy().reshape((num_points, 1))
-        if num_columns == 3:
-            z = point_coordinates.Val.to_numpy().reshape((num_points, 1))
-            coords = np.concatenate((x, y, z), axis=1)
-        else:
-            coords = np.concatenate((x, y), axis=1)
-        line_string = shapely.geometry.LineString(coords)
-    else:
-        gdf = gpd.read_file(filepath)["geometry"]
-        line_string = gdf[0]
-
-    return line_string
-
-
-def get_xy_km(km_file) -> shapely.geometry.linestring.LineString:
-    """From D-FAST BE: io.get_xy_km()
-
-    Returns
-    -------
-    xykm : shapely.geometry.linestring.LineStringAdapter
-    """
-    # get the chainage file
-    # log_text("read_chainage", dict={"file": km_file})
-    xy_km = read_xyc(km_file, num_columns=3)
-
-    # make sure that chainage is increasing with node index
-    if xy_km.coords[0][2] > xy_km.coords[1][2]:
-        xy_km = LineString(xy_km.coords[::-1])
-
-    return xy_km
-
-
 def extract_coordinates(geometries: list) -> np.ndarray:
     """Extract coordinates from a list of Point and MultiPoint geometries."""
     coords = []
@@ -213,97 +147,3 @@ class ProfileLines:
 def calculate_angle(coords):
     vertices = np.array(coords)
     return np.degrees(np.arctan2(np.diff(vertices[:, 1]), np.diff(vertices[:, 0])))
-
-
-def project_km_on_line(line_xy: np.ndarray, xykm_np: np.ndarray) -> np.ndarray:
-    """
-    From D-FAST BE: support.project_km_on_line
-
-    Project chainage values from source line L1 onto another line L2.
-
-    The chainage values are giving along a line L1 (xykm_np). For each node
-    of the line L2 (line_xy) on which we would like to know the chainage, first
-    the closest node (discrete set of nodes) on L1 is determined and
-    subsequently the exact chainage isobtained by determining the closest point
-    (continuous line) on L1 for which the chainage is determined using by means
-    of interpolation.
-
-    Arguments
-    ---------
-    line_xy : np.ndarray
-        Array containing the x,y coordinates of a line.
-    xykm_np : np.ndarray
-        Array containing the x,y,chainage data.
-
-    Results
-    -------
-    line_km : np.ndarray
-        Array containing the chainage for every coordinate specified in line_xy.
-    """
-    # pre-allocate the array for the mapped chainage values
-    line_km = np.zeros(line_xy.shape[0])
-
-    # get an array with only the x,y coordinates of line L1
-    xy_np = xykm_np[:, :2]
-    last_xykm = xykm_np.shape[0] - 1
-
-    # for each node rp on line L2 get the chainage ...
-    for i, rp_np in enumerate(line_xy):
-        # find the node on L1 closest to rp
-        imin = np.argmin(((rp_np - xy_np) ** 2).sum(axis=1))
-        p0 = xy_np[imin]
-
-        # determine the distance between that node and rp
-        dist2 = ((rp_np - p0) ** 2).sum()
-
-        # chainage value of that node
-        km = xykm_np[imin, 2]
-        # print("chainage closest node: ", km)
-
-        # if we didn't get the first node
-        if imin > 0:
-            # project rp onto the line segment before this node
-            p1 = xy_np[imin - 1]
-            alpha = (
-                (p1[0] - p0[0]) * (rp_np[0] - p0[0])
-                + (p1[1] - p0[1]) * (rp_np[1] - p0[1])
-            ) / ((p1[0] - p0[0]) ** 2 + (p1[1] - p0[1]) ** 2)
-            # if there is a closest point not coinciding with the nodes ...
-            if alpha > 0 and alpha < 1:
-                dist2link = (rp_np[0] - p0[0] - alpha * (p1[0] - p0[0])) ** 2 + (
-                    rp_np[1] - p0[1] - alpha * (p1[1] - p0[1])
-                ) ** 2
-                # if it's actually closer than the node ...
-                if dist2link < dist2:
-                    # update the closest point information
-                    dist2 = dist2link
-                    km = xykm_np[imin, 2] + alpha * (
-                        xykm_np[imin - 1, 2] - xykm_np[imin, 2]
-                    )
-                    # print("chainage of projection 1: ", km)
-
-        # if we didn't get the last node
-        if imin < last_xykm:
-            # project rp onto the line segment after this node
-            p1 = xy_np[imin + 1]
-            alpha = (
-                (p1[0] - p0[0]) * (rp_np[0] - p0[0])
-                + (p1[1] - p0[1]) * (rp_np[1] - p0[1])
-            ) / ((p1[0] - p0[0]) ** 2 + (p1[1] - p0[1]) ** 2)
-            # if there is a closest point not coinciding with the nodes ...
-            if alpha > 0 and alpha < 1:
-                dist2link = (rp_np[0] - p0[0] - alpha * (p1[0] - p0[0])) ** 2 + (
-                    rp_np[1] - p0[1] - alpha * (p1[1] - p0[1])
-                ) ** 2
-                # if it's actually closer than the previous value ...
-                if dist2link < dist2:
-                    # update the closest point information
-                    dist2 = dist2link
-                    km = xykm_np[imin, 2] + alpha * (
-                        xykm_np[imin + 1, 2] - xykm_np[imin, 2]
-                    )
-                    # print("chainage of projection 2: ", km)
-
-        # store the chainage value, loop ... and return
-        line_km[i] = km
-    return line_km

@@ -1,6 +1,8 @@
 import logging
+from pathlib import Path
 
-from dfasttf.batch.core import preprocess_1d, run_analysis
+from dfasttf.batch import dflowfm
+from dfasttf.batch.core import run_analysis
 from dfasttf.batch.dflowfm import Variables
 from dfasttf.config import Config
 
@@ -8,8 +10,8 @@ logging.basicConfig(filename="dfasttf.log", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# TODO: make figfiles optional, now depends on SavePlots=True
-def run(config_file: str, ships_file: str) -> None:
+
+def run(config_file: Path, ships_file: Path) -> None:
     """Main entry point for running the analysis."""
     logger.info("Running analysis...")
 
@@ -24,7 +26,10 @@ def run(config_file: str, ships_file: str) -> None:
     )
 
     prof_line_df = None
-    prof_line_df, riverkm = preprocess_1d(configuration)
+    if configuration.general.profiles_file is not None:
+        prof_line_df = dflowfm.read_profile_lines(Path(configuration.general.profiles_file))
+
+    riverkm = configuration.general.riverkm
 
     for section in configuration.keys():
         if "Reference" in configuration.config[section]:
