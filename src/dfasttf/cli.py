@@ -138,9 +138,7 @@ def main(argv: list[str] | None = None) -> int:
         args = parse_arguments(argv)
         config_file, rivers_file, ships_file = validate_args(args)
 
-        # Note: rivers_file is currently not used in the run function
-        # but is available for future use
-        run(str(config_file), str(ships_file))
+        run(config_file, ships_file)
 
         return 0
 
