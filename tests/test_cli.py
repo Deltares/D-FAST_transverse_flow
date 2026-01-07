@@ -1,9 +1,9 @@
 """
-Run the dfastrbk module to produce output files for the 'NVO Maas' example.
+Run the dfasttf module to produce output files for the 'NVO Maas' example.
 
 Usage:
-    1) Activate the py_3_10-dfastmi venv.
-    2) Run this script.
+    1) Activate the appropriate venv.
+    2) Run this script with pytest.
 """
 import sys
 import subprocess
@@ -12,9 +12,11 @@ from dfasttf import __path__
 
 
 def test_cli():
+    """Test the CLI command with the NVO Maas example."""
     config = "examples/c04-nvo-maas/config.ini"
-    ship_dimensions  = Path(__path__[0]) / "ship_dimensions.ini"
-    
+
+    ship_dimensions = Path(__path__[0]) / "data" / "ship_dimensions.ini"
+
     cmd = [
         sys.executable,
         "-m",
@@ -25,4 +27,6 @@ def test_cli():
     
     result = subprocess.run(cmd, capture_output=True, text=True)
     print(result.stdout)
+    if result.stderr:
+        print(result.stderr, file=sys.stderr)
     assert result.returncode == 0, f"Command failed: {result.stderr}"
