@@ -82,7 +82,7 @@ jobs:
 
           # Verify CLI is available
           echo "Testing CLI availability:"
-          toets-svkw --help
+          dfasttf --help
 
       - name: Install test dependencies
         run: |
