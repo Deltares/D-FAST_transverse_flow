@@ -59,11 +59,11 @@ jobs:
             export PATH="$HOME/.local/bin:$PATH"
             
             # Verify lock file and install dependencies for building
-            poetry check --check || poetry lock --no-update
+            poetry check --lock || poetry lock --no-update
             poetry install --only dev
             
             # Build wheel from current source
-            uv build
+            poetry build
             mv dist/*.whl ./
           fi
         env:
