@@ -107,7 +107,7 @@ jobs:
           
           # Verify example files exist
           if [ ! -f "examples/c04-nvo-maas/config.ini" ]; then
-            echo "::error::Example config file not found: examples/data/storm_3m/storm_3m.yaml"
+            echo "::error::Example config file not found: examples/c04-nvo-maas/config.ini"
             exit 1
           fi
           
