@@ -80,7 +80,7 @@ version_provider = "poetry"
 tag_format = "$version"
 changelog_file = "docs/mkdocs/change-log.md"
 update_changelog_on_bump = true
-changelog_incremental = true
+changelog_incremental = false
 version_scheme = "pep440"
 
 
