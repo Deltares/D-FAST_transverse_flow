@@ -29,9 +29,6 @@ cd D-FAST_transverse_flow
 
 # Install dependencies
 poetry install
-
-# Activate the virtual environment
-poetry shell
 ```
 
 ## Quick Start
@@ -197,7 +194,7 @@ The project uses:
 
 4. **Review Results**
    - Excel files with tabulated data
-   - Figures showing transverse flow patterns
+   - Figures showing flow velocity, angle, and transverse flow component
    - Log file with processing details
 
 ## Related Tools
