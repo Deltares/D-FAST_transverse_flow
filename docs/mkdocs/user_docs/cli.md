@@ -13,13 +13,6 @@ poetry install
 poetry run dfasttf
 ```
 
-Or install directly with pip:
-
-```bash
-pip install d-fast-transverse-flow
-dfasttf
-```
-
 ## Basic Usage
 
 The tool operates using a configuration file that specifies all analysis parameters:
