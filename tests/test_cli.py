@@ -7,8 +7,10 @@ Usage:
 """
 import sys
 import subprocess
+import pytest
 
 
+@pytest.mark.e2e
 def test_cli():
     """Test the CLI command with the NVO Maas example."""
     config = "examples/c04-nvo-maas/config.ini"
