@@ -3,15 +3,14 @@
 [![License: LGPL v2.1](https://img.shields.io/badge/License-LGPL_v2.1-blue.svg)](https://www.gnu.org/licenses/lgpl-2.1)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 
-A tool to perform bank erosion analysis based on D-Flow FM simulation results. D-FAST Transverse Flow analyzes transverse flow patterns and velocity angles at cross-sections to assess potential bank erosion risks.
+A tool to perform river intervention impact assessment based on D-Flow FM simulation results. D-FAST Transverse Flow analyzes transverse flow patterns and velocity angles to assess potential shipping risks.
 
 ## Features
 
-- **Transverse Flow Analysis**: Calculate and visualize transverse flow components across river cross-sections
+- **Transverse Flow Analysis**: Calculate and visualize transverse flow components along navigation channel boundaries
 - **Velocity Angle Analysis**: Analyze flow angles relative to channel orientation
 - **Multi-Discharge Analysis**: Compare conditions at multiple discharge levels
-- **Before/After Comparison**: Evaluate impacts of river interventions (dredging, groins, etc.)
-- **Bank Erosion Assessment**: Integrate with ship-induced wave calculations for comprehensive bank erosion risk analysis
+- **Before/After Comparison**: Evaluate impacts of river interventions
 - **Automated Reporting**: Generate Excel spreadsheets and publication-quality figures
 
 ## Installation
@@ -30,9 +29,6 @@ cd D-FAST_transverse_flow
 
 # Install dependencies
 poetry install
-
-# Activate the virtual environment
-poetry shell
 ```
 
 ## Quick Start
@@ -44,7 +40,7 @@ dfasttf --config examples/c04-nvo-maas/config.ini
 ```
 
 This will:
-- Process D-Flow FM simulation results for the Maas river
+- Process D-Flow FM simulation results for a hypothetical renaturalized bank along the Meuse river
 - Analyze transverse flow at two discharge levels (1300 m³/s and 2100 m³/s)
 - Generate Excel files with cross-section data in `examples/c04-nvo-maas/output/`
 - Create visualization figures in `examples/c04-nvo-maas/figures/`
@@ -109,7 +105,7 @@ Create a configuration file (`config.ini`) with analysis parameters:
 
 ### Optional Files
 
-- **Ship Dimensions File** (`.ini`): Vessel specifications for bank erosion calculations
+- **Ship Dimensions File** (`.ini`): Vessel dimensions for transverse discharge calculations
 - **Rivers Configuration File** (`.ini`): Hydraulic parameters for Dutch rivers
 - **Bed Change File** (`.nc`): Morphological changes from D-FAST MI analysis
 
@@ -118,15 +114,15 @@ Create a configuration file (`config.ini`) with analysis parameters:
 ### Excel Files
 
 Cross-section data for each case and profile:
-- `{case}_{profile}_transverse_flow.xlsx`: Transverse flow magnitude
-- `{case}_{profile}_velocity_angle.xlsx`: Flow angle relative to cross-section
+- `{case}_{profile}_transverse_flow.xlsx`: Assessment of exceedance of local criteria for transverse flow
+- `{case}_{profile}_velocity_angle.xlsx`: Flow velocity and angle along the cross-section
 - `{case}_{profile}_transverse_velocity.xlsx`: Transverse velocity component
 
 ### Figures
 
 Publication-quality PNG images:
-- `{profile}_location.png`: Profile location map with mesh
-- `{case}_{profile}_transverse_flow.png`: Transverse flow along profile
+- `{profile}_location.png`: Profile location map with bed level
+- `{case}_{profile}_transverse_flow.png`: Transverse flow along profile(s)
 - `{case}_{profile}_velocity_angle.png`: Velocity angle distribution
 
 ## Documentation
@@ -198,7 +194,7 @@ The project uses:
 
 4. **Review Results**
    - Excel files with tabulated data
-   - Figures showing transverse flow patterns
+   - Figures showing flow velocity, angle, and transverse flow component
    - Log file with processing details
 
 ## Related Tools
