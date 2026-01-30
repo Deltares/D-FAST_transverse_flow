@@ -75,7 +75,7 @@ The configuration file uses INI format with sections for different aspects of th
 
 ### Complete Configuration Example
 
-Here's a complete example from the NVO Maas test case:
+Here's a complete example from the provided test case:
 
 ```ini
 [General]
@@ -120,8 +120,8 @@ Core settings for the analysis:
 
 - **Version**: Configuration file format version (use `3.0`)
 - **CaseDescription**: Descriptive name for the analysis case
-- **Branch**: River branch name (used for looking up ship dimensions and river properties)
-- **Reach**: Specific reach within the branch
+- **Branch**: River branch name (currently any name is accepted but not used in the analysis)
+- **Reach**: Specific reach within the branch, used for looking up ship dimensions. Should match one of the reaches in the ship dimensions file.
 - **OutputDir**: Directory where Excel output files will be saved (relative to config file)
 - **Plotting**: Enable/disable figure generation (`True`/`False`)
 - **PlotType**: Type of plots to generate (`1D` for cross-section plots)
@@ -192,7 +192,7 @@ The tool includes a default `ship_dimensions.ini` file with predefined vessel di
 dfasttf --config examples/c04-nvo-maas/config.ini --ships path/to/custom_ships.ini
 ```
 
-**Note**: The example uses the `Branch = Maas` setting in the config file, which references the "Maas" section in the bundled `ship_dimensions.ini`:
+**Note**: The example uses the `Reach = Maas` setting in the config file, which references the "Maas" section in the bundled `ship_dimensions.ini`:
 
 ```ini
 [Maas]
@@ -200,7 +200,7 @@ dfasttf --config examples/c04-nvo-maas/config.ini --ships path/to/custom_ships.i
     Depth = 3.5
 ```
 
-The `Branch` parameter in your configuration file must match a section name in the ships file.
+The `Reach` parameter in your configuration file must match a section name in the ships file.
 
 ### Example 3: Multiple Discharge Levels
 

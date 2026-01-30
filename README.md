@@ -3,7 +3,7 @@
 [![License: LGPL v2.1](https://img.shields.io/badge/License-LGPL_v2.1-blue.svg)](https://www.gnu.org/licenses/lgpl-2.1)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 
-A tool to perform river intervention impact assessment based on D-Flow FM simulation results. D-FAST Transverse Flow analyzes transverse flow patterns and velocity angles to assess potential shipping risks.
+A tool to perform river intervention impact assessment based on D-Flow FM simulation results. D-FAST Transverse Flow analyzes transverse flow patterns and velocity angles to assess potential shipping risks, according to specifications by Rijkswaterstaat (2023) and developed by Groenewege (2026).
 
 ## Features
 
@@ -40,7 +40,7 @@ dfasttf --config examples/c04-nvo-maas/config.ini
 ```
 
 This will:
-- Process D-Flow FM simulation results for a hypothetical renaturalized bank along the Meuse river
+- Process D-Flow FM simulation results for a hypothetical renaturalized and eroded bank along the Meuse river (from Groenewege & Spruyt, 2025)
 - Analyze transverse flow at two discharge levels (1300 m³/s and 2100 m³/s)
 - Generate Excel files with cross-section data in `examples/c04-nvo-maas/output/`
 - Create visualization figures in `examples/c04-nvo-maas/figures/`
@@ -114,16 +114,16 @@ Create a configuration file (`config.ini`) with analysis parameters:
 ### Excel Files
 
 Cross-section data for each case and profile:
-- `{case}_{profile}_transverse_flow.xlsx`: Assessment of exceedance of local criteria for transverse flow
-- `{case}_{profile}_velocity_angle.xlsx`: Flow velocity and angle along the cross-section
-- `{case}_{profile}_transverse_velocity.xlsx`: Transverse velocity component
+- `{case}_profile{nr}_transverse_flow.xlsx`: Assessment of exceedance of local criteria for transverse flow
+- `{case}_profile{nr}_velocity_angle.xlsx`: Flow velocity and angle along the cross-section
+- `{case}_profile{nr}_transverse_velocity.xlsx`: Transverse velocity component
 
 ### Figures
 
 Publication-quality PNG images:
-- `{profile}_location.png`: Profile location map with bed level
-- `{case}_{profile}_transverse_flow.png`: Transverse flow along profile(s)
-- `{case}_{profile}_velocity_angle.png`: Velocity angle distribution
+- `profile{nr}_location.png`: Profile location map with bed level
+- `{case}_profile{nr}_transverse_flow.png`: Transverse flow along profile(s)
+- `{case}_profile{nr}_velocity_angle.png`: Velocity angle distribution
 
 ## Documentation
 
@@ -200,9 +200,9 @@ The project uses:
 ## Related Tools
 
 D-FAST Transverse Flow is part of the D-FAST toolkit:
-
 - **[D-FAST Morphological Impact](https://github.com/Deltares/D-FAST_Morphological_Impact)**: Bed level change analysis
 - **[D-FAST Bank Erosion](https://github.com/Deltares/D-FAST_Bank_Erosion)**: Comprehensive bank erosion assessment
+
 - **[D-Flow FM](https://www.deltares.nl/en/software/delft3d-flexible-mesh-suite/)**: Hydrodynamic simulation software
 
 ## Contributing
@@ -241,6 +241,14 @@ This project is licensed under the GNU Lesser General Public License v2.1 - see 
 ## Acknowledgments
 
 Developed by [Deltares](https://www.deltares.nl/) for river management and analysis applications.
+
+## References
+
+Groenewege, R. (2026). Verkenning tool voor effecten ijsafvoer en dwarsstroming. Deltares report 11211565-010-ZWS-0001. (in Dutch).
+
+Groenewege, R. and Spruyt, A. (2025). Verkenning invloed onregelmatige oevers op rivierfuncties. Deltares report 11210364-011-ZWS-0002, https://www.deltares.nl/en/expertise/publications/verkenning-invloed-onregelmatige-oevers-op-rivierfuncties. (in Dutch).
+
+Rijkswaterstaat (2023). Rivierkundig Beoordelingskader voor ingrepen in de Grote Rivieren. Ministerie van Infrastructuur en Waterstaat, Rijkswaterstaat Water, Verkeer en Leefomgeving. (in Dutch).
 
 ---
 
