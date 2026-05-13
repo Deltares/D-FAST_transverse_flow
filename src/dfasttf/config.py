@@ -30,7 +30,9 @@ class Ship:
             length = float(config[reach]["Length"])
             depth = float(config[reach]["Depth"])
         except KeyError as e:
-            raise ValueError(f"Missing key in ships file for reach '{reach}': {e}") from e
+            raise ValueError(
+                f"Missing key in ships file for reach '{reach}': {e}"
+            ) from e
         return cls(length=length, depth=depth)
 
 
@@ -58,26 +60,29 @@ class Config:
         self.plotsettings = PlotSettings(self.configdir, self.data)
 
 
-def get_output_files(config: ConfigParser, configdir: Path, section: str):
-    """
-    Adds output files from config file section to configuration.
-    """
+def get_output_files(
+    config: ConfigParser, configdir: Path, section: str, tide: bool = False
+):
     output_files = []
+    ref_key = "ReferenceTide" if tide else "Reference"
+    int_key = "WithInterventionTide" if tide else "WithIntervention"
 
-    reference_file = config.get(section, "Reference")
-    output_files.append(
-        ConfigFileOperations._get_absolute_path_from_relative_path(
-            str(configdir), reference_file
-        )
-    )
-
-    if WITHINTERVENTION_KEY in config[section]:
-        with_intervention = config.get(section, "WithIntervention")
+    ref = config.get(section, ref_key, fallback="")
+    if ref:
         output_files.append(
             ConfigFileOperations._get_absolute_path_from_relative_path(
-                str(configdir), with_intervention
+                str(configdir), ref
             )
         )
+
+    if int_key in config[section]:
+        wi = config.get(section, int_key)
+        output_files.append(
+            ConfigFileOperations._get_absolute_path_from_relative_path(
+                str(configdir), wi
+            )
+        )
+
     return output_files
 
 
@@ -92,6 +97,7 @@ class GeneralSettings:
     profiles_file: Path | None
     bedchangefile: Path | None
     bbox: list | None
+    tide_last_hours: float | None
 
     @classmethod
     def from_config(
@@ -102,8 +108,15 @@ class GeneralSettings:
 
         bool_flags = {
             flag.lower(): data.getboolean(GENERAL_SECTION, flag, fallback=False)
-            for flag in ["InvertXAxis", "WaterUpliftCorrection", "BedChangeCorrection"]
+            for flag in [
+                "InvertXAxis",
+                "WaterUpliftCorrection",
+                "BedChangeCorrection",
+                "TideAnalysis",
+            ]
         }
+
+        tide_last_hours = data.getfloat(GENERAL_SECTION, "TideLastHours", fallback=None)
 
         riverkm = None
         if "RiverKM" in config[GENERAL_SECTION]:
@@ -140,6 +153,7 @@ class GeneralSettings:
             riverkm=riverkm,
             profiles_file=profiles_file,
             bedchangefile=bedchangefile,
+            tide_last_hours=tide_last_hours,
             bbox=bbox,
         )
 

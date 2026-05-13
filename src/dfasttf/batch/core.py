@@ -21,11 +21,22 @@ def run_analysis(
     prof_line_df: DataFrame | None,
     riverkm: LineString | None,
 ):
-    simulation_data = load_simulation_data(configuration, section)
+
+    tide = configuration.general.bool_flags.get("tideanalysis", False)
+    simulation_data = load_simulation_data(configuration, section, keep_time=False)
+    simulation_data_tide = (
+        load_simulation_data(configuration, section, keep_time=True) if tide else None
+    )
 
     plot_actions = {
         "1D": lambda: run_1d_analysis(
-            configuration, section, simulation_data, variables, prof_line_df, riverkm
+            configuration,
+            section,
+            simulation_data,
+            simulation_data_tide,
+            variables,
+            prof_line_df,
+            riverkm,
         ),
         "2D": lambda: run_2d_analysis(
             configuration, section, simulation_data, variables, prof_line_df
@@ -44,6 +55,7 @@ def run_1d_analysis(
     configuration: Config,
     section: str,
     simulation_data: list[UgridDataset],
+    simulation_data_tide: list[UgridDataset] | None,  # Implemented for tide analysis
     variables: Variables,
     prof_line_df: DataFrame,
     riverkm: LineString,
@@ -55,9 +67,16 @@ def run_1d_analysis(
     for geom_idx, profile_line in enumerate(
         tqdm(prof_line_df.geometry, desc="geometry", position=0, leave=True)
     ):
+        tide = configuration.general.bool_flags.get("tideanalysis", False)
         profile_coords = np.array(profile_line.coords)
         profile_index = str(prof_line_df.iloc[geom_idx].name)
         profile_data = {var: [] for var in variables._fields}
+
+        profile_data_tide = None
+        if tide:
+            profile_data_tide = {var: [] for var in variables._fields}
+            profile_data_tide["time"] = []
+
         bounds = profile_line.bounds
 
         for idx, _ in enumerate(
@@ -80,7 +99,45 @@ def run_1d_analysis(
             rkm, path_distances, isegment, iface = sliced_ugrid
             angles = np.array(prof_line_df["angle"].iloc[geom_idx][isegment])
             for var, name in variables._asdict().items():
-                profile_data[var].append(dflowfm.get_profile_data(data, name, iface))
+                profile_data[var].append(
+                    dflowfm.get_profile_data(data, name, iface, time_index_from_last=0)
+                )
+
+            # tide extraction (only if enabled in config and map files are provided)
+
+            if tide and simulation_data_tide is not None:
+                data_tide = clip_simulation_data(
+                    simulation_data_tide[idx],
+                    [
+                        bounds[0] - padding,
+                        bounds[2] + padding,
+                        bounds[1] - padding,
+                        bounds[3] + padding,
+                    ],
+                )
+
+                if "time" in data_tide.coords:
+                    profile_data_tide["time"].append(
+                        np.asarray(data_tide["time"].values)
+                    )
+                else:
+                    profile_data_tide["time"].append(None)
+                # ------------------------------------------------------
+
+                TIME_SERIES_VARS = {
+                    "ucx",
+                    "ucy",
+                    "h",
+                    "uc",
+                } 
+
+                for var, name in variables._asdict().items():
+                    ti = None if var in TIME_SERIES_VARS else 0
+                    profile_data_tide[var].append(
+                        dflowfm.get_profile_data(
+                            data_tide, name, iface, time_index_from_last=ti
+                        )
+                    )
 
         if (
             sliced_ugrid is None
@@ -92,6 +149,7 @@ def run_1d_analysis(
             section,
             profile_index,
             profile_data,
+            profile_data_tide,
             angles,
             rkm,
             path_distances,
@@ -111,6 +169,7 @@ def save_1d_figures(
     section: str,
     profile_index: str,
     profile_data: dict,
+    profile_data_tide: dict | None,
     angles: np.ndarray,
     rkm: np.ndarray,
     path_distances: np.ndarray,
@@ -120,6 +179,7 @@ def save_1d_figures(
     figext = configuration.plotsettings.options.plot_extension
     outputdir = configuration.outputdir
 
+    # ---- Ice (old) ----
     base = f"{section}_profile{profile_index}_velocity_angle"
     figfile = construct_figure_filename(figdir, base, figext)
     outputfile = (outputdir / base).with_suffix(".xlsx")
@@ -139,7 +199,7 @@ def save_1d_figures(
     outputfiles.append((outputdir / base).with_suffix(".xlsx"))
 
     base = f"{section}_profile{profile_index}_transverse_flow"
-    figfile = construct_figure_filename(figdir, base, figext)
+    figfile_cross = construct_figure_filename(figdir, base, figext)
     outputfiles.append((outputdir / base).with_suffix(".xlsx"))
 
     cross_flow.run(
@@ -150,8 +210,44 @@ def save_1d_figures(
         angles,
         rkm,
         configuration,
-        figfile,
+        figfile_cross,
         outputfiles,
+    )
+
+    # ---- Tide analysis ----
+    tide = configuration.general.bool_flags.get("tideanalysis", False)
+
+    # If tide is off or tide data missing -> done
+    if not tide or profile_data_tide is None:
+        return
+
+    # Tide outputs
+    base = f"{section}_profile{profile_index}_tide_crossflow"
+    tide_outfile = (outputdir / base).with_suffix(".xlsx")
+
+    base = f"{section}_profile{profile_index}_tide_transverse_velocity"
+    figfile_tide_vel = construct_figure_filename(figdir, base, figext)
+
+    base = f"{section}_profile{profile_index}_tide_transverse_flow_maxQ"
+    figfile_tide_q = construct_figure_filename(figdir, base, figext)
+
+    base = f"{section}_profile{profile_index}_tide_alongstream_velocity_time"
+    figfile_tide_upar = construct_figure_filename(figdir, base, figext)
+
+    # Tide analysis call
+    cross_flow.run_tide(
+        profile_data_tide["ucx"],
+        profile_data_tide["ucy"],
+        profile_data_tide["h"],
+        path_distances,
+        angles,
+        rkm,
+        configuration,
+        tide_outfile,
+        figfile_tide_vel,
+        figfile_tide_q,
+        figfile_tide_upar,
+        profile_data_tide["time"],
     )
 
 
@@ -188,8 +284,12 @@ def run_2d_analysis(
             ymin, ymax = float(ys.min()), float(ys.max())
             bbox = [xmin - padding, xmax + padding, ymin - padding, ymax + padding]
 
-        water_depth = [clip_simulation_data(ds[variables.h], bbox) for ds in simulation_data]
-        flow_velocity = [clip_simulation_data(ds[variables.uc], bbox) for ds in simulation_data]
+        water_depth = [
+            clip_simulation_data(ds[variables.h], bbox) for ds in simulation_data
+        ]
+        flow_velocity = [
+            clip_simulation_data(ds[variables.uc], bbox) for ds in simulation_data
+        ]
         figfiles = [
             construct_figure_filename(
                 configuration.plotsettings.options.figure_save_directory,
@@ -199,7 +299,9 @@ def run_2d_analysis(
             for label in labels
         ]
         if water_depth and getattr(water_depth[0], "size", 0) != 0:
-            ice.run_2d(water_depth, flow_velocity, configuration, profile_line, figfiles)
+            ice.run_2d(
+                water_depth, flow_velocity, configuration, profile_line, figfiles
+            )
     else:
         for geom_idx, profile_line in enumerate(
             tqdm(prof_line_df.geometry, desc="geometry", position=0, leave=True)
@@ -228,4 +330,6 @@ def run_2d_analysis(
             ]
 
             if water_depth[0].size != 0:
-                ice.run_2d(water_depth, flow_velocity, configuration, profile_line, figfiles)
+                ice.run_2d(
+                    water_depth, flow_velocity, configuration, profile_line, figfiles
+                )

@@ -5,6 +5,8 @@ from typing import NamedTuple
 import numpy as np
 import xugrid as xu
 from pandas import DataFrame
+import os
+import warnings
 
 from shapely import LineString
 from xugrid import UgridDataArray, UgridDataset
@@ -32,18 +34,76 @@ class Variables(NamedTuple):
     bl: str
 
 
-def load_simulation_data(configuration: Config, section: str) -> list[UgridDataset]:
-    """Load and preprocess simulation datasets."""
+def _select_last_hours(ds, hours: float):
+    """Select only last `hours` on ds.time axis."""
+    if "time" not in ds.coords:
+        return ds
+
+    t = ds["time"].values
+    if t.size == 0:
+        return ds
+
+    # Ensure datetime64
+    t_end = np.datetime64(t[-1])
+    t_start = t_end - np.timedelta64(int(hours * 3600), "s")
+
+    return ds.sel(time=slice(t_start, t_end))
+
+
+def load_simulation_data(configuration: Config, section: str, keep_time: bool = False):
+    """
+    keep_time=False: normal analysis -> must load configured Reference/WithIntervention files.
+    keep_time=True : tide analysis -> try to load ReferenceTide/WithInterventionTide.
+                  If missing or files not found: warn and return None (caller should skip tide analysis).
+    """
     datasets = []
     output_files = get_output_files(
-        configuration.config, configuration.configdir, section
+        configuration.config, configuration.configdir, section, tide=keep_time
     )
+
+    # TideAnalysis requested but tide files not configured
+    if keep_time and not output_files:
+        warnings.warn(
+            f"[{section}] TideAnalysis=True but no tide files configured "
+            f"(missing 'ReferenceTide' and/or 'WithInterventionTide'). "
+            "Tide analysis will be skipped.",
+            RuntimeWarning,
+        )
+        return None
+
+    # TideAnalysis requested but one or more tide files do not exist
+    if keep_time:
+        missing = [f for f in output_files if not os.path.isfile(f)]
+        if missing:
+            warnings.warn(
+                f"[{section}] TideAnalysis=True but tide file(s) not found:\n"
+                + "\n".join(f"  - {m}" for m in missing)
+                + "\nTide analysis will be skipped.",
+                RuntimeWarning,
+            )
+            return None
+
+    # Normal mode: still error hard if primary files missing
+    if not keep_time:
+        missing = [f for f in output_files if not os.path.isfile(f)]
+        if missing:
+            raise FileNotFoundError(
+                f"[{section}] Required simulation file(s) not found:\n"
+                + "\n".join(f"  - {m}" for m in missing)
+            )
+
     for file in output_files:
         ds = xu.open_dataset(file, chunks={"time": 1, "x": 100, "y": 100})
-
         if configuration.general.bbox is not None:
             ds = clip_simulation_data(ds, configuration.general.bbox)
-        ds = extract_variables(ds)
+
+        # Only restrict time window for tide datasets if TideLastHours is defined
+        if keep_time:
+            hours = getattr(configuration.general, "tide_last_hours", None)
+            if hours is not None:
+                ds = _select_last_hours(ds, float(hours))
+
+        ds = extract_variables(ds, keep_time=keep_time)
         datasets.append(ds)
     return datasets
 
@@ -56,11 +116,13 @@ def clip_simulation_data(
     return data.ugrid.sel(x=slice(bbox[0], bbox[1]), y=slice(bbox[2], bbox[3]))
 
 
-def extract_variables(ds: xu.UgridDataset) -> xu.UgridDataset:
-    """Extract and standardize variable names from a NetCDF dataset using lazy loading and Dask."""
+def extract_variables(ds: xu.UgridDataset, keep_time: bool = False) -> xu.UgridDataset:
+    has_time = "time" in ds.coords
 
-    if "time" in ds.coords:
+    # Only drop time for the snapshot path
+    if has_time and not keep_time:
         ds = ds.isel(time=-1)
+
     else:
         bl = find_variable(ds, "altitude")
         wl = find_variable(ds, "sea_surface_height")
@@ -68,14 +130,18 @@ def extract_variables(ds: xu.UgridDataset) -> xu.UgridDataset:
         ucx = find_variable(ds, "sea_water_x_velocity")
         ucy = find_variable(ds, "sea_water_y_velocity")
 
-        ds[bl] = ds[bl].ugrid.to_face().mean("nmax")  # bed elevation on nodes to faces
+    bl_da = ds[bl]
+    if "time" in bl_da.dims:
+        bl_da = bl_da.isel(time=-1)
+    bl_face = bl_da.ugrid.to_face().mean("nmax")
 
-        ds = ds.assign(
-            mesh2d_waterdepth=ds[wl] - ds[bl],
-            mesh2d_ucmag=ds[uc],
-            mesh2d_ucx=ds[ucx],
-            mesh2d_ucy=ds[ucy],
-        )
+    ds = ds.assign(
+        mesh2d_waterdepth=ds[wl] - bl_face,
+        mesh2d_ucmag=ds[uc],
+        mesh2d_ucx=ds[ucx],
+        mesh2d_ucy=ds[ucy],
+        mesh2d_bl=bl_face,
+    )
 
     return ds
 
@@ -96,10 +162,58 @@ def find_variable(data: UgridDataset, standard_name: str) -> str:
 
 
 def get_profile_data(
-    profile_dataset: UgridDataset, variable_name: str, face_idx
-) -> dict:
-    profile_data = profile_dataset[variable_name].data[face_idx]
-    return profile_data
+    profile_dataset: xu.UgridDataset,
+    variable_name: str,
+    face_idx,
+    time_index_from_last: int | None = 0,
+):
+    """
+    Extract values for selected faces along a profile.
+
+    Returns
+    -------
+    np.ndarray
+        - (n,) for fourier variables
+        - (nt, n) for time-dependent variables when time_index_from_last=None
+    """
+    da = profile_dataset[variable_name]
+    dims = da.dims
+    data = da.data
+
+    # Face dimension in your datasets
+    if "mesh2d_nFaces" in dims:
+        face_axis = dims.index("mesh2d_nFaces")
+    elif "mesh2d_face" in dims:
+        face_axis = dims.index("mesh2d_face")
+    else:
+        non_time = [d for d in dims if d != "time"]
+        if len(non_time) != 1:
+            raise ValueError(
+                f"Cannot determine face dimension for '{variable_name}', dims={dims}"
+            )
+        face_axis = dims.index(non_time[0])
+
+    if "time" in dims:
+        time_axis = dims.index("time")
+
+        if time_index_from_last is None:
+            # full time series: (nt, n)
+            sel = np.take(data, face_idx, axis=face_axis)
+        else:
+            t = -1 - int(time_index_from_last)
+            data_t = data[t]  # slice time first
+
+            # After removing time axis, the face axis shifts if time was before it
+            fa = face_axis - 1 if time_axis < face_axis else face_axis
+            sel = np.take(data_t, face_idx, axis=fa)
+    else:
+        if time_index_from_last is None:
+            raise ValueError(
+                f"Requested time series for '{variable_name}', but dataset has no time dimension. dims={dims}"
+            )
+        sel = np.take(data, face_idx, axis=face_axis)
+
+    return sel.compute() if hasattr(sel, "compute") else np.asarray(sel)
 
 
 def slice_ugrid(
@@ -347,8 +461,7 @@ def group_duplicates(array: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 def convert_to_rkm(intersects, river_km, conversion_factor=1):
     """Converts an array of points to the corresponding rkm values
 
-    Parameters:
-    intersects: Nx2 array of intersection points 
+    Parameters:    intersects: Nx2 array of intersection points
     river_km: Mx3 array with x, y, and chainage values (river km)
     conversion_factor: optional, to convert km to another unit (default = 1)"""
     intersects_line = LineGeometry(intersects)
