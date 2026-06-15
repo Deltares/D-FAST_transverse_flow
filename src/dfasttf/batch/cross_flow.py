@@ -58,8 +58,8 @@ def run(
     configuration: Config,
     figfile: Path,
     outputfiles: list[Path],
-    profile_points_xy: np.ndarray,
-    axis_point_xy: np.ndarray,
+    #profile_points_xy: np.ndarray,
+    #axis_point_xy: np.ndarray,
     tide: TideInputs | None = None,
 ) -> None:
     """
@@ -90,12 +90,12 @@ def run(
         # Reorient so that:
         # positive = toward bank
         # negative = toward river axis
-        trans_flow = flow.orient_transverse_toward_bank(
-            trans_flow,
-            profile_angles,
-            profile_points_xy,
-            axis_point_xy,
-        )
+        # trans_flow = flow.orient_transverse_toward_bank(
+        #     trans_flow,
+        #     profile_angles,
+        #     profile_points_xy,
+        #     axis_point_xy,
+        # )
 
         repr_trans_flow = flow.repr_trans_velocity(
             wd, trans_flow, path_distances, configuration.ship_params.depth
@@ -223,12 +223,12 @@ def run(
         # Reorient so that:
         # positive = toward bank
         # negative = toward river axis
-        tv_tn = flow.orient_transverse_toward_bank(
-            tv_tn,
-            profile_angles,
-            profile_points_xy,
-            axis_point_xy,
-        )
+        # tv_tn = flow.orient_transverse_toward_bank(
+        #     tv_tn,
+        #     profile_angles,
+        #     profile_points_xy,
+        #     axis_point_xy,
+        # )
 
         idx_ebb, idx_flood, tv_ebb, tv_flood = flow.tide_peaks_from_upar(upar_tn, tv_tn)
 

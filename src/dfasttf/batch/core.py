@@ -15,65 +15,65 @@ from dfasttf.batch.plotting import Plot2D, construct_figure_filename
 from dfasttf.config import Config
 
 
-def build_profile_points_xy(
-    profile_line: LineString,
-    path_distances: np.ndarray,
-) -> np.ndarray:
-    """
-    Convert cumulative distances along the profile line to XY coordinates.
+# def build_profile_points_xy(
+#     profile_line: LineString,
+#     path_distances: np.ndarray,
+# ) -> np.ndarray:
+#     """
+#     Convert cumulative distances along the profile line to XY coordinates.
 
-    Returns
-    -------
-    np.ndarray
-        Array of shape (n, 2) with XY coordinates of the profile sample points.
-    """
-    d = np.asarray(path_distances, dtype=float)
-    d = np.clip(d, 0.0, float(profile_line.length))
+#     Returns
+#     -------
+#     np.ndarray
+#         Array of shape (n, 2) with XY coordinates of the profile sample points.
+#     """
+#     d = np.asarray(path_distances, dtype=float)
+#     d = np.clip(d, 0.0, float(profile_line.length))
 
-    return np.array(
-        [profile_line.interpolate(float(di)).coords[0][:2] for di in d],
-        dtype=float,
-    )
+#     return np.array(
+#         [profile_line.interpolate(float(di)).coords[0][:2] for di in d],
+#         dtype=float,
+#     )
 
 
-def get_axis_point_xy(
-    profile_line: LineString,
-    riverkm: LineString,
-) -> np.ndarray:
-    """
-    Determine the river-axis point associated with a profile line.
+# def get_axis_point_xy(
+#     profile_line: LineString,
+#     riverkm: LineString,
+# ) -> np.ndarray:
+#     """
+#     Determine the river-axis point associated with a profile line.
 
-    Preferred behaviour:
-    - use the actual intersection point between profile_line and riverkm
-    - if multiple points exist, take the one closest to the profile midpoint
-    - if no intersection exists, fall back to the nearest point on riverkm
-      to the profile midpoint
+#     Preferred behaviour:
+#     - use the actual intersection point between profile_line and riverkm
+#     - if multiple points exist, take the one closest to the profile midpoint
+#     - if no intersection exists, fall back to the nearest point on riverkm
+#       to the profile midpoint
 
-    Returns
-    -------
-    np.ndarray
-        XY coordinate of the axis point, shape (2,)
-    """
-    inter = profile_line.intersection(riverkm)
-    mid = profile_line.interpolate(profile_line.length / 2.0)
+#     Returns
+#     -------
+#     np.ndarray
+#         XY coordinate of the axis point, shape (2,)
+#     """
+#     inter = profile_line.intersection(riverkm)
+#     mid = profile_line.interpolate(profile_line.length / 2.0)
 
-    if inter.is_empty:
-        s = riverkm.project(mid)
-        p = riverkm.interpolate(s)
-        return np.array(p.coords[0][:2], dtype=float)
+#     if inter.is_empty:
+#         s = riverkm.project(mid)
+#         p = riverkm.interpolate(s)
+#         return np.array(p.coords[0][:2], dtype=float)
 
-    if inter.geom_type == "Point":
-        return np.array(inter.coords[0][:2], dtype=float)
+#     if inter.geom_type == "Point":
+#         return np.array(inter.coords[0][:2], dtype=float)
 
-    if inter.geom_type == "MultiPoint":
-        pts = list(inter.geoms)
-        p = min(pts, key=lambda pt: pt.distance(mid))
-        return np.array(p.coords[0][:2], dtype=float)
+#     if inter.geom_type == "MultiPoint":
+#         pts = list(inter.geoms)
+#         p = min(pts, key=lambda pt: pt.distance(mid))
+#         return np.array(p.coords[0][:2], dtype=float)
 
-    # fallback for uncommon intersection geometries
-    s = riverkm.project(mid)
-    p = riverkm.interpolate(s)
-    return np.array(p.coords[0][:2], dtype=float)
+#     # fallback for uncommon intersection geometries
+#     s = riverkm.project(mid)
+#     p = riverkm.interpolate(s)
+#     return np.array(p.coords[0][:2], dtype=float)
 
 
 def run_analysis(
@@ -166,8 +166,8 @@ def run_1d_analysis(
             rkm, path_distances, isegment, iface = sliced_ugrid
             angles = np.array(prof_line_df["angle"].iloc[geom_idx][isegment])
 
-            profile_points_xy = build_profile_points_xy(profile_line, path_distances)
-            axis_point_xy = get_axis_point_xy(profile_line, riverkm)
+            #profile_points_xy = build_profile_points_xy(profile_line, path_distances)
+            #axis_point_xy = get_axis_point_xy(profile_line, riverkm)
 
             for var, name in variables._asdict().items():
                 profile_data[var].append(
@@ -231,8 +231,8 @@ def run_1d_analysis(
             angles,
             rkm,
             path_distances,
-            profile_points_xy,
-            axis_point_xy,
+            #profile_points_xy,
+            #axis_point_xy,
         )
 
         bedlevel = data[variables.bl].where(lambda x: x != 999)
@@ -253,8 +253,8 @@ def save_1d_figures(
     angles: np.ndarray,
     rkm: np.ndarray,
     path_distances: np.ndarray,
-    profile_points_xy: np.ndarray,
-    axis_point_xy: np.ndarray,
+    #profile_points_xy: np.ndarray,
+    #axis_point_xy: np.ndarray,
 ):
     """Generate and save 1D figures and CSV files."""
     figdir = configuration.plotsettings.options.figure_save_directory
@@ -328,8 +328,8 @@ def save_1d_figures(
         configuration,
         figfile_cross,
         outputfiles,
-        profile_points_xy,
-        axis_point_xy,
+        #profile_points_xy,
+        #axis_point_xy,
         tide=tide_inputs,
     )
 

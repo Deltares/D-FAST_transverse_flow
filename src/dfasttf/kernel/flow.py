@@ -131,42 +131,42 @@ def tide_max_transverse_per_point(
     return idx_tvmax, tv_max, upar_at_tvmax
 
 
-def orient_transverse_toward_bank(
-    transverse_velocity: np.ndarray,
-    profile_angles: np.ndarray,
-    profile_points_xy: np.ndarray,   # shape (n, 2)
-    axis_point_xy: np.ndarray,       # shape (2,)
-) -> np.ndarray:
-    """
-    Reorient transverse velocity so that:
-      positive = toward bank
-      negative = toward river axis
+# def orient_transverse_toward_bank(
+#     transverse_velocity: np.ndarray,
+#     profile_angles: np.ndarray,
+#     profile_points_xy: np.ndarray,   # shape (n, 2)
+#     axis_point_xy: np.ndarray,       # shape (2,)
+# ) -> np.ndarray:
+#     """
+#     Reorient transverse velocity so that:
+#       positive = toward bank
+#       negative = toward river axis
 
-    Works for:
-    - (n,) arrays
-    - (nt, n) arrays
-    """
-    transverse_velocity = np.asarray(transverse_velocity)
-    th = np.radians(profile_angles)
+#     Works for:
+#     - (n,) arrays
+#     - (nt, n) arrays
+#     """
+#     transverse_velocity = np.asarray(transverse_velocity)
+#     th = np.radians(profile_angles)
 
-    # positive normal that matches flow.trans_velocity()
-    nx = -np.sin(th)
-    ny = np.cos(th)
+#     # positive normal that matches flow.trans_velocity()
+#     nx = -np.sin(th)
+#     ny = np.cos(th)
 
-    # vector from river axis to profile point
-    rx = profile_points_xy[:, 0] - axis_point_xy[0]
-    ry = profile_points_xy[:, 1] - axis_point_xy[1]
+#     # vector from river axis to profile point
+#     rx = profile_points_xy[:, 0] - axis_point_xy[0]
+#     ry = profile_points_xy[:, 1] - axis_point_xy[1]
 
-    dot = nx * rx + ny * ry
-    sign_bank = np.sign(dot)
-    sign_bank[sign_bank == 0] = 1.0
+#     dot = nx * rx + ny * ry
+#     sign_bank = np.sign(dot)
+#     sign_bank[sign_bank == 0] = 1.0
 
-    if transverse_velocity.ndim == 1:
-        return transverse_velocity * sign_bank
-    if transverse_velocity.ndim == 2:
-        return transverse_velocity * sign_bank[np.newaxis, :]
+#     if transverse_velocity.ndim == 1:
+#         return transverse_velocity * sign_bank
+#     if transverse_velocity.ndim == 2:
+#         return transverse_velocity * sign_bank[np.newaxis, :]
 
-    raise ValueError("transverse_velocity must be 1D or 2D")
+#     raise ValueError("transverse_velocity must be 1D or 2D")
 
 
 def alongstream_velocity(
