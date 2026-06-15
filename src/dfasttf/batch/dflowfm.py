@@ -105,17 +105,20 @@ def check_time_interval(ds, section: str, file: str) -> None:
     one_hour = np.timedelta64(1, "h")
     two_hours = np.timedelta64(2, "h")
 
+    max_dt_s = float(max_dt / np.timedelta64(1, "s"))
+    median_dt_s = float(median_dt / np.timedelta64(1, "s"))
+
     if median_dt > two_hours:
         raise RuntimeError(
             f"[{section}] MAP file time interval is too large for tide analysis.\n"
-            f"Median dt = {median_dt}, allowed <= 2h\n"
+            f"Median dt = {median_dt_s:.0f}s, allowed <= 2h\n"
             f"File: {file}"
         )
 
     if median_dt > one_hour:
         warnings.warn(
             f"[{section}] MAP file time interval is relatively large for tide analysis.\n"
-            f"Median dt = {median_dt} (> 1h). Results may be less accurate.\n"
+            f"Median dt = {median_dt_s:.0f}s (> 1h). Results may be less accurate.\n"
             f"File: {file}",
             RuntimeWarning,
         )
@@ -124,7 +127,7 @@ def check_time_interval(ds, section: str, file: str) -> None:
     if max_dt > 10 * median_dt:
         warnings.warn(
             f"[{section}] MAP file contains irregular output intervals.\n"
-            f"Median dt = {median_dt}, but maximum dt = {max_dt}.\n"
+            f"Median dt = {median_dt_s:.0f}s, but maximum dt = {max_dt_s:.0f}s.\n"
             f"This may indicate an initial gap or non-uniform output scheduling.\n"
             f"File: {file}",
             RuntimeWarning,
