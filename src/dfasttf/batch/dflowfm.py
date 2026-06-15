@@ -78,12 +78,15 @@ def check_time_coverage(ds, section: str, file: str) -> None:
 
 def check_time_interval(ds, section: str, file: str) -> None:
     """
-    Check whether the timestep interval in the dataset is suitable for tide analysis.
+    Check whether the effective timestep interval in the dataset is suitable for tide analysis.
 
     Behaviour
     ---------
-    - max dt > 2 hours  -> RuntimeError
-    - max dt > 1 hour   -> warning
+    - Uses the median timestep as the primary measure, to avoid false errors
+      from one large initial gap in the output time series.
+    - median dt > 2 hours  -> RuntimeError
+    - median dt > 1 hour   -> warning
+    - if a much larger gap exists, issue an additional warning
     """
     if "time" not in ds.coords or ds["time"].size < 2:
         return
@@ -91,24 +94,38 @@ def check_time_interval(ds, section: str, file: str) -> None:
     t = ds["time"].values
     dt = np.diff(t)
 
+    # keep only positive finite intervals
+    dt = dt[np.isfinite(dt) & (dt > np.timedelta64(0, "s"))]
     if dt.size == 0:
         return
 
+    median_dt = np.median(dt)
     max_dt = dt.max()
+
     one_hour = np.timedelta64(1, "h")
     two_hours = np.timedelta64(2, "h")
 
-    if max_dt > two_hours:
+    if median_dt > two_hours:
         raise RuntimeError(
             f"[{section}] MAP file time interval is too large for tide analysis.\n"
-            f"Maximum dt = {max_dt}, allowed <= 2h\n"
+            f"Median dt = {median_dt}, allowed <= 2h\n"
             f"File: {file}"
         )
 
-    if max_dt > one_hour:
+    if median_dt > one_hour:
         warnings.warn(
             f"[{section}] MAP file time interval is relatively large for tide analysis.\n"
-            f"Maximum dt = {max_dt} (> 1h). Results may be less accurate.\n"
+            f"Median dt = {median_dt} (> 1h). Results may be less accurate.\n"
+            f"File: {file}",
+            RuntimeWarning,
+        )
+
+    # optional: warn if there are large irregular gaps
+    if max_dt > 10 * median_dt:
+        warnings.warn(
+            f"[{section}] MAP file contains irregular output intervals.\n"
+            f"Median dt = {median_dt}, but maximum dt = {max_dt}.\n"
+            f"This may indicate an initial gap or non-uniform output scheduling.\n"
             f"File: {file}",
             RuntimeWarning,
         )
