@@ -11,7 +11,7 @@ import warnings
 from shapely import LineString
 from xugrid import UgridDataArray, UgridDataset
 from dfastbe.io.data_models import LineGeometry
-
+from dfasttf.batch.filetype import detect_file_info, FileKind
 from dfasttf.batch import geometry
 from dfasttf.config import Config, get_output_files
 
@@ -34,78 +34,232 @@ class Variables(NamedTuple):
     bl: str
 
 
-def _select_last_hours(ds, hours: float):
-    """Select only last `hours` on ds.time axis."""
-    if "time" not in ds.coords:
+def _select_last_hours(ds, hours: float | None):
+    """Selecteer alleen laatste `hours` uren. Als hours=None -> do nothing."""
+    if hours is None or "time" not in ds.coords:
         return ds
 
     t = ds["time"].values
     if t.size == 0:
         return ds
 
-    # Ensure datetime64
     t_end = np.datetime64(t[-1])
-    t_start = t_end - np.timedelta64(int(hours * 3600), "s")
-
+    t_start = t_end - np.timedelta64(int(float(hours) * 3600), "s")
     return ds.sel(time=slice(t_start, t_end))
 
 
-def load_simulation_data(configuration: Config, section: str, keep_time: bool = False):
+def check_time_coverage(ds, section: str, file: str) -> None:
     """
-    keep_time=False: normal analysis -> must load configured Reference/WithIntervention files.
-    keep_time=True : tide analysis -> try to load ReferenceTide/WithInterventionTide.
-                  If missing or files not found: warn and return None (caller should skip tide analysis).
-    """
-    datasets = []
-    output_files = get_output_files(
-        configuration.config, configuration.configdir, section, tide=keep_time
-    )
+    Check whether the dataset covers at least one full tide cycle.
 
-    # TideAnalysis requested but tide files not configured
-    if keep_time and not output_files:
+    Raises
+    ------
+    RuntimeError
+        If the dataset has no usable time axis or if the total duration is too short.
+    """
+    if "time" not in ds.coords or ds["time"].size < 2:
+        raise RuntimeError(
+            f"[{section}] Tide analysis requires a time axis with at least 2 timesteps.\n"
+            f"File: {file}"
+        )
+
+    t = ds["time"].values
+    duration = np.datetime64(t[-1]) - np.datetime64(t[0])
+
+    min_duration = np.timedelta64(24 * 60 + 50, "m")  # 24h50m
+
+    if duration < min_duration:
+        raise RuntimeError(
+            f"[{section}] MAP file does not cover at least one full tide cycle.\n"
+            f"Required: {min_duration}, found: {duration}\n"
+            f"File: {file}"
+        )
+
+
+def check_time_interval(ds, section: str, file: str) -> None:
+    """
+    Check whether the timestep interval in the dataset is suitable for tide analysis.
+
+    Behaviour
+    ---------
+    - max dt > 2 hours  -> RuntimeError
+    - max dt > 1 hour   -> warning
+    """
+    if "time" not in ds.coords or ds["time"].size < 2:
+        return
+
+    t = ds["time"].values
+    dt = np.diff(t)
+
+    if dt.size == 0:
+        return
+
+    max_dt = dt.max()
+    one_hour = np.timedelta64(1, "h")
+    two_hours = np.timedelta64(2, "h")
+
+    if max_dt > two_hours:
+        raise RuntimeError(
+            f"[{section}] MAP file time interval is too large for tide analysis.\n"
+            f"Maximum dt = {max_dt}, allowed <= 2h\n"
+            f"File: {file}"
+        )
+
+    if max_dt > one_hour:
         warnings.warn(
-            f"[{section}] TideAnalysis=True but no tide files configured "
-            f"(missing 'ReferenceTide' and/or 'WithInterventionTide'). "
-            "Tide analysis will be skipped.",
+            f"[{section}] MAP file time interval is relatively large for tide analysis.\n"
+            f"Maximum dt = {max_dt} (> 1h). Results may be less accurate.\n"
+            f"File: {file}",
             RuntimeWarning,
         )
-        return None
 
-    # TideAnalysis requested but one or more tide files do not exist
-    if keep_time:
-        missing = [f for f in output_files if not os.path.isfile(f)]
-        if missing:
-            warnings.warn(
-                f"[{section}] TideAnalysis=True but tide file(s) not found:\n"
-                + "\n".join(f"  - {m}" for m in missing)
-                + "\nTide analysis will be skipped.",
-                RuntimeWarning,
-            )
-            return None
 
-    # Normal mode: still error hard if primary files missing
-    if not keep_time:
-        missing = [f for f in output_files if not os.path.isfile(f)]
-        if missing:
-            raise FileNotFoundError(
-                f"[{section}] Required simulation file(s) not found:\n"
-                + "\n".join(f"  - {m}" for m in missing)
-            )
+def check_ship_length_vs_profile_resolution(
+    path_distances: np.ndarray,
+    ship_length: float,
+    section: str,
+    profile_index: str,
+) -> None:
+    """
+    Check whether the profile resolution is sufficiently fine relative to the ship length.
+
+    Rules
+    -----
+    - cells_per_ship < 1   -> RuntimeError
+    - cells_per_ship < 10  -> warning
+    """
+    dx = np.diff(path_distances)
+    dx = dx[np.isfinite(dx) & (dx > 0)]
+
+    if dx.size == 0:
+        raise RuntimeError(
+            f"[{section} profile {profile_index}] Could not determine valid profile spacing."
+        )
+
+    median_dx = float(np.median(dx))
+    cells_per_ship = ship_length / median_dx
+
+    if cells_per_ship < 1:
+        raise RuntimeError(
+            f"[{section} profile {profile_index}] Profile resolution is too coarse "
+            f"for ship length {ship_length:.2f} m. "
+            f"Median dx = {median_dx:.2f} m -> only {cells_per_ship:.2f} cells per ship length. "
+            f"The transverse discharge analysis is not meaningful."
+        )
+
+    if cells_per_ship < 10:
+        warnings.warn(
+            f"[{section} profile {profile_index}] Profile resolution may be too coarse "
+            f"for ship length {ship_length:.2f} m. "
+            f"Median dx = {median_dx:.2f} m -> only {cells_per_ship:.1f} cells per ship length.",
+            RuntimeWarning,
+        )
+
+
+def load_simulation_data(configuration: Config, section: str):
+    """
+    Content-based loader:
+
+    Returns
+    -------
+    simulation_data_snapshot : list[UgridDataset]
+        Always returned. For MAP input: last timestep is selected.
+    simulation_data_tide : list[UgridDataset] | None
+        Only returned when Tide=True AND input is MAP (has time). Otherwise None.
+
+    Behavior
+    --------
+    - MAP:
+        original analysis = isel(time=-1)
+        tide = full ds (or last hours if TideLastHours is available in config)
+    - FOU (no time but supports original analysis):
+        snapshot = ds
+        tide = None (warning if Tide=True)
+    - INVALID:
+        when the required variables are not present hard fail with clear message
+    """
+    output_files = get_output_files(
+        configuration.config, configuration.configdir, section
+    )
+
+    tide_flag = configuration.general.bool_flags.get("tide", False)
+    tide_last_hours = getattr(configuration.general, "tide_last_hours", None)
+
+    if tide_flag and tide_last_hours is None:
+        warnings.warn(
+            "Tide=True but TideLastHours is not set. "
+            "Using the full available time series.",
+            RuntimeWarning,
+        )
+
+    if tide_flag and tide_last_hours is not None and tide_last_hours < 24.5:
+        warnings.warn(
+            f"[{section}] TideLastHours={tide_last_hours:.2f} h is less than one full tide cycle "
+            f"(24.5 h). Tide results will be based only on the selected time window.",
+            RuntimeWarning,
+        )
+
+    snapshot_datasets: list[xu.UgridDataset] = []
+    tide_datasets: list[xu.UgridDataset] = []
 
     for file in output_files:
+        if not os.path.isfile(file):
+            raise FileNotFoundError(f"[{section}] File not found: {file}")
+
         ds = xu.open_dataset(file, chunks={"time": 1, "x": 100, "y": 100})
+
         if configuration.general.bbox is not None:
             ds = clip_simulation_data(ds, configuration.general.bbox)
 
-        # Only restrict time window for tide datasets if TideLastHours is defined
-        if keep_time:
-            hours = getattr(configuration.general, "tide_last_hours", None)
-            if hours is not None:
-                ds = _select_last_hours(ds, float(hours))
+        # Optional: skip empty clipped datasets (prevents downstream issues)
+        nfaces = int(ds.sizes.get("mesh2d_nFaces", 0))
+        if nfaces == 0:
+            warnings.warn(
+                f"[{section}] Dataset became empty after clipping (mesh2d_nFaces=0). "
+                f"File: {file}. Skipping this dataset.",
+                RuntimeWarning,
+            )
+            continue
 
-        ds = extract_variables(ds, keep_time=keep_time)
-        datasets.append(ds)
-    return datasets
+        info = detect_file_info(ds)
+
+        if info.kind == FileKind.INVALID:
+            raise RuntimeError(
+                f"[{section}] Input has no time dimension and misses required variables for original analysis.\n"
+                f"File: {file}\n"
+                f"Missing: {info.missing}\n"
+                f"Available vars (sample): {info.vars_sample}"
+            )
+
+        # MAP-specific tide checks
+        if tide_flag and info.kind == FileKind.MAP:
+            check_time_coverage(ds, section, file)
+            check_time_interval(ds, section, file)
+
+        # --- SNAPSHOT dataset ---
+        if info.kind == FileKind.MAP:
+            ds_snap = ds.isel(time=-1)
+        else:
+            ds_snap = ds
+
+        snapshot_datasets.append(extract_variables(ds_snap))
+
+        # --- TIDE dataset (only for MAP) ---
+        if tide_flag and info.kind == FileKind.MAP:
+            ds_tide = ds
+            ds_tide = _select_last_hours(
+                ds_tide, tide_last_hours
+            )  # hours=None -> no-op
+            tide_datasets.append(extract_variables(ds_tide))
+        elif tide_flag:
+            warnings.warn(
+                f"[{section}] Tide=True but file has no time dimension (FOU). Tide analysis skipped.\n"
+                f"File: {file}",
+                RuntimeWarning,
+            )
+
+    simulation_data_tide = tide_datasets if tide_datasets else None
+    return snapshot_datasets, simulation_data_tide
 
 
 def clip_simulation_data(
@@ -116,23 +270,19 @@ def clip_simulation_data(
     return data.ugrid.sel(x=slice(bbox[0], bbox[1]), y=slice(bbox[2], bbox[3]))
 
 
-def extract_variables(ds: xu.UgridDataset, keep_time: bool = False) -> xu.UgridDataset:
-    has_time = "time" in ds.coords
+def extract_variables(ds: xu.UgridDataset) -> xu.UgridDataset:
+    """Extract and standardize variable names from a NetCDF dataset using lazy loading and Dask."""
 
-    # Only drop time for the snapshot path
-    if has_time and not keep_time:
-        ds = ds.isel(time=-1)
-
-    else:
-        bl = find_variable(ds, "altitude")
-        wl = find_variable(ds, "sea_surface_height")
-        uc = find_variable(ds, "sea_water_speed")
-        ucx = find_variable(ds, "sea_water_x_velocity")
-        ucy = find_variable(ds, "sea_water_y_velocity")
+    bl = find_variable(ds, "altitude")
+    wl = find_variable(ds, "sea_surface_height")
+    uc = find_variable(ds, "sea_water_speed")
+    ucx = find_variable(ds, "sea_water_x_velocity")
+    ucy = find_variable(ds, "sea_water_y_velocity")
 
     bl_da = ds[bl]
     if "time" in bl_da.dims:
         bl_da = bl_da.isel(time=-1)
+
     bl_face = bl_da.ugrid.to_face().mean("nmax")
 
     ds = ds.assign(
@@ -166,50 +316,70 @@ def get_profile_data(
     variable_name: str,
     face_idx,
     time_index_from_last: int | None = 0,
-):
+) -> np.ndarray:
     """
-    Extract values for selected faces along a profile.
+    Extract values of a face-based variable along a profile.
+
+    This function assumes the variable is stored on the mesh face dimension
+    ``mesh2d_nFaces`` and optionally on a time dimension.
+
+    Parameters
+    ----------
+    profile_dataset : xu.UgridDataset
+        Dataset containing the variable.
+    variable_name : str
+        Name of the variable to extract.
+    face_idx : array-like
+        Indices of the faces that intersect the profile.
+    time_index_from_last : int | None, default 0
+        Select which timestep to extract when the variable has a time dimension.
+
+        - ``0``  -> last timestep
+        - ``1``  -> one before last
+        - ``None`` -> full time series
 
     Returns
     -------
     np.ndarray
-        - (n,) for fourier variables
-        - (nt, n) for time-dependent variables when time_index_from_last=None
+        - shape ``(n,)`` for snapshot extraction
+        - shape ``(nt, n)`` for time-series extraction
+
+    Raises
+    ------
+    ValueError
+        If the variable is not stored on ``mesh2d_nFaces``, or if a full time
+        series is requested for a variable without a time dimension.
+
+    Notes
+    -----
+    This function is used for both:
+    - snapshot analysis (single timestep)
+    - tide analysis (full time series)
+
+    It explicitly indexes the face dimension, so it works correctly for both
+    variables with dims ``(mesh2d_nFaces,)`` and ``(time, mesh2d_nFaces)``.
     """
     da = profile_dataset[variable_name]
-    dims = da.dims
     data = da.data
 
-    # Face dimension in your datasets
-    if "mesh2d_nFaces" in dims:
-        face_axis = dims.index("mesh2d_nFaces")
-    elif "mesh2d_face" in dims:
-        face_axis = dims.index("mesh2d_face")
-    else:
-        non_time = [d for d in dims if d != "time"]
-        if len(non_time) != 1:
-            raise ValueError(
-                f"Cannot determine face dimension for '{variable_name}', dims={dims}"
-            )
-        face_axis = dims.index(non_time[0])
+    if "mesh2d_nFaces" not in da.dims:
+        raise ValueError(
+            f"Variable '{variable_name}' is not face-based. dims={da.dims}"
+        )
 
-    if "time" in dims:
-        time_axis = dims.index("time")
+    face_axis = da.dims.index("mesh2d_nFaces")
 
+    if "time" in da.dims:
         if time_index_from_last is None:
-            # full time series: (nt, n)
-            sel = np.take(data, face_idx, axis=face_axis)
+            sel = np.take(data, face_idx, axis=face_axis)  # (nt, n)
         else:
             t = -1 - int(time_index_from_last)
-            data_t = data[t]  # slice time first
-
-            # After removing time axis, the face axis shifts if time was before it
-            fa = face_axis - 1 if time_axis < face_axis else face_axis
-            sel = np.take(data_t, face_idx, axis=fa)
+            data_t = data[t]
+            sel = np.take(data_t, face_idx, axis=face_axis - 1)  # time axis removed
     else:
         if time_index_from_last is None:
             raise ValueError(
-                f"Requested time series for '{variable_name}', but dataset has no time dimension. dims={dims}"
+                f"Requested time series for '{variable_name}', but dataset has no time dimension."
             )
         sel = np.take(data, face_idx, axis=face_axis)
 

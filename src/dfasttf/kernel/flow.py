@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.ndimage import uniform_filter1d
+from typing import Tuple
 
 
 def trans_velocity(u0: np.ndarray, v0: np.ndarray, angles: np.ndarray) -> np.ndarray:
@@ -86,3 +87,181 @@ def trans_discharge(u_integral: np.ndarray, ship_depth: float) -> np.ndarray:
 
     q = u_integral * ship_depth
     return q
+
+
+def tide_max_transverse_per_point(
+    upar_tn: np.ndarray,   # (nt, n)
+    tv_tn: np.ndarray,     # (nt, n)
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Determine, for each profile point, when the absolute transverse velocity is maximal.
+
+    Parameters
+    ----------
+    upar_tn : np.ndarray
+        Along-stream velocity time series, shape (nt, n).
+    tv_tn : np.ndarray
+        Representative transverse velocity time series, shape (nt, n).
+
+    Returns
+    -------
+    idx_tvmax : (n,) int ndarray
+        Timestep index where |tv| is maximal for each profile point.
+    tv_max : (n,) float ndarray
+        Signed transverse velocity at that timestep.
+    upar_at_tvmax : (n,) float ndarray
+        Along-stream velocity at that timestep.
+    """
+    upar_tn = np.asarray(upar_tn)
+    tv_tn = np.asarray(tv_tn)
+
+    if upar_tn.ndim != 2 or tv_tn.ndim != 2 or upar_tn.shape != tv_tn.shape:
+        raise ValueError(
+            f"upar_tn and tv_tn must be same shape (nt, n). Got {upar_tn.shape} and {tv_tn.shape}"
+        )
+
+    idx_tvmax = np.nanargmax(np.abs(tv_tn), axis=0).astype(int)
+
+    n = tv_tn.shape[1]
+    i = np.arange(n)
+
+    tv_max = tv_tn[idx_tvmax, i]
+    upar_at_tvmax = upar_tn[idx_tvmax, i]
+
+    return idx_tvmax, tv_max, upar_at_tvmax
+
+
+def orient_transverse_toward_bank(
+    transverse_velocity: np.ndarray,
+    profile_angles: np.ndarray,
+    profile_points_xy: np.ndarray,   # shape (n, 2)
+    axis_point_xy: np.ndarray,       # shape (2,)
+) -> np.ndarray:
+    """
+    Reorient transverse velocity so that:
+      positive = toward bank
+      negative = toward river axis
+
+    Works for:
+    - (n,) arrays
+    - (nt, n) arrays
+    """
+    transverse_velocity = np.asarray(transverse_velocity)
+    th = np.radians(profile_angles)
+
+    # positive normal that matches flow.trans_velocity()
+    nx = -np.sin(th)
+    ny = np.cos(th)
+
+    # vector from river axis to profile point
+    rx = profile_points_xy[:, 0] - axis_point_xy[0]
+    ry = profile_points_xy[:, 1] - axis_point_xy[1]
+
+    dot = nx * rx + ny * ry
+    sign_bank = np.sign(dot)
+    sign_bank[sign_bank == 0] = 1.0
+
+    if transverse_velocity.ndim == 1:
+        return transverse_velocity * sign_bank
+    if transverse_velocity.ndim == 2:
+        return transverse_velocity * sign_bank[np.newaxis, :]
+
+    raise ValueError("transverse_velocity must be 1D or 2D")
+
+
+def alongstream_velocity(
+    u: np.ndarray, v: np.ndarray, angles_deg: np.ndarray
+) -> np.ndarray:
+    """
+    Along-stream velocity component:
+    u_parallel = u*cos(theta) + v*sin(theta)
+
+    angles_deg: degrees, 0 deg along +x axis.
+    """
+    th = np.radians(angles_deg)
+    return u * np.cos(th) + v * np.sin(th)
+
+
+
+def tide_time_series(
+    ucx_tn: np.ndarray,  # (nt, n)
+    ucy_tn: np.ndarray,  # (nt, n)
+    h_tn: np.ndarray,  # (nt, n)
+    path_distances: np.ndarray,  # (n,)
+    angles_deg: np.ndarray,  # (n,)
+    ship_depth: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Compute time series needed for tide analysis for ONE case.
+
+    Returns
+    -------
+    upar_tn : (nt, n) ndarray
+        Along-stream velocity time series.
+    tv_tn : (nt, n) ndarray
+        Representative transverse velocity time series.
+    """
+    ucx_tn = np.asarray(ucx_tn)
+    ucy_tn = np.asarray(ucy_tn)
+    h_tn = np.asarray(h_tn)
+
+    if ucx_tn.ndim != 2 or ucy_tn.ndim != 2 or h_tn.ndim != 2:
+        raise ValueError("ucx_tn, ucy_tn, h_tn must be 2D arrays with shape (nt, n).")
+    if ucx_tn.shape != ucy_tn.shape or ucx_tn.shape != h_tn.shape:
+        raise ValueError(
+            f"shape mismatch: ucx_tn={ucx_tn.shape}, ucy_tn={ucy_tn.shape}, h_tn={h_tn.shape}"
+        )
+
+    nt, n = ucx_tn.shape
+    if path_distances.shape[0] != n or angles_deg.shape[0] != n:
+        raise ValueError(
+            "path_distances and angles_deg must have length n (= number of profile points)."
+        )
+
+    
+    upar_tn = np.empty((nt, n), dtype=float)
+    tv_tn = np.empty((nt, n), dtype=float)
+    
+    for t in range(nt):
+        u = ucx_tn[t]
+        v = ucy_tn[t]
+        h = h_tn[t]
+    
+        upar_tn[t] = alongstream_velocity(u, v, angles_deg)
+    
+        w = trans_velocity(u, v, angles_deg)
+        tv_tn[t] = repr_trans_velocity(h, w, path_distances, ship_depth)
+        
+    return upar_tn, tv_tn
+
+
+def tide_peaks_from_upar(
+    upar_tn: np.ndarray,  # (nt, n)
+    tv_tn: np.ndarray,  # (nt, n)
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Given u_parallel(t,i) and tv(t,i), compute per-point peak ebb/flood indices and tv at those indices.
+
+    Returns
+    -------
+    idx_ebb : (n,) int ndarray
+    idx_flood : (n,) int ndarray
+    tv_ebb : (n,) float ndarray
+    tv_flood : (n,) float ndarray
+    """
+    upar_tn = np.asarray(upar_tn)
+    tv_tn = np.asarray(tv_tn)
+    if upar_tn.ndim != 2 or tv_tn.ndim != 2 or upar_tn.shape != tv_tn.shape:
+        raise ValueError(
+            f"upar_tn and tv_tn must be same shape (nt, n). Got {upar_tn.shape} and {tv_tn.shape}"
+        )
+
+    idx_ebb = np.nanargmax(upar_tn, axis=0).astype(int)
+    idx_flood = np.nanargmin(upar_tn, axis=0).astype(int)
+
+    n = upar_tn.shape[1]
+    i = np.arange(n)
+    tv_ebb = tv_tn[idx_ebb, i]
+    tv_flood = tv_tn[idx_flood, i]
+
+    return idx_ebb, idx_flood, tv_ebb, tv_flood

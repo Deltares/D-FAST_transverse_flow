@@ -1,11 +1,51 @@
 from pathlib import Path
-
 import numpy as np
 import pandas as pd
-
 from dfasttf.batch import operations, plotting, support
 from dfasttf.config import Config
 from dfasttf.kernel import flow
+from dataclasses import dataclass
+import warnings
+
+
+@dataclass(frozen=True)
+class TideInputs:
+    ucx: list[np.ndarray]  # each (nt, n)
+    ucy: list[np.ndarray]  # each (nt, n)
+    h: list[np.ndarray]  # each (nt, n)
+    time_list: list[np.ndarray | None]  # per case (nt,)
+    fig_vel: Path
+    fig_qmax: Path
+    fig_upar: Path
+    fig_max_tv: Path
+
+
+def _fail_if_fourier_inputs(
+    ucx: list[np.ndarray], ucy: list[np.ndarray], h: list[np.ndarray]
+) -> None:
+    """
+    Hard fail if input looks like Fourier/running-mean based data (no flow vectors).
+    In practice: Fourier files never provide ucx/ucy arrays for the profile extraction,
+    so ucx/ucy/h will not have expected numeric shapes.
+    This guard is mainly here to give a clearer error if a Fourier file slips through.
+    """
+    # If caller passed something non-numeric or empty, fail fast with clear message.
+    # (Your IO layer should already prevent Fourier, but this keeps behavior strict.)
+    for name, arrs in (("ucx", ucx), ("ucy", ucy), ("h", h)):
+        if not arrs or arrs[0] is None:
+            raise RuntimeError(
+                "FOURIER/RUNNING-MEAN input detected (no ucx/ucy/h vectors). "
+                "Cross-flow/tide analysis requires a MAP or snapshot flow file with ucx/ucy/waterdepth."
+            )
+
+
+def prepare_data_for_excel(xy_block, discharge, crit_value):
+    CONVERT_M_TO_KM = 1000
+    x_start = [xy[0][0] / CONVERT_M_TO_KM for xy in xy_block]
+    x_end = [xy[0][-1] / CONVERT_M_TO_KM for xy in xy_block]
+    y_max = [max(abs(xy[1])) for xy in xy_block]
+    exceedance = y_max > abs(crit_value)
+    return (x_start, x_end, discharge, y_max, crit_value, exceedance)
 
 
 def run(
@@ -17,24 +57,24 @@ def run(
     rkm: np.ndarray,
     configuration: Config,
     figfile: Path,
-    outputfiles: Path,
+    outputfiles: list[Path],
+    profile_points_xy: np.ndarray,
+    axis_point_xy: np.ndarray,
+    tide: TideInputs | None = None,
 ) -> None:
     """
-    Input:
-    ucx: (n,)
-        x-component of flow velocity
-    ucy: (n,)
-        y-component of flow velocity
-    water_depth: (n,)
-        water depth at intersection points
-    path_distances: (n,)
-        cumulative distance between intersection points
-    profile_angles: (n,)
-        angle of profile line segments
-    rkm: (n,)
-        projected riverkm values
+    Single public entry point:
+      - Always executes snapshot cross-flow analysis.
+      - If Tide=True:
+          * MAP/time tide inputs present -> runs tide analysis
+          * otherwise -> warning + skip tide
+      - Fourier inputs -> hard fail (safety net)
     """
+    _fail_if_fourier_inputs(ucx, ucy, water_depth)
 
+    # ============================================================
+    # Cross-flow analysis via Fourier or Map file
+    # ============================================================
     SHEET_LABELS = ("Reference", "WithIntervention", "Difference")
     CRITERIA: tuple[float, float] = (0.15, 0.3)  # criteria for transverse velocity
 
@@ -43,8 +83,20 @@ def run(
     # Transverse velocity:
     COLUMN_LABELS = ("raai (rkm)", "dwarsstroomsnelheid (m/s)")
     transverse_velocity = []
+
     for x, y, wd in zip(ucx, ucy, water_depth):
         trans_flow = flow.trans_velocity(x, y, profile_angles)
+
+        # Reorient so that:
+        # positive = toward bank
+        # negative = toward river axis
+        trans_flow = flow.orient_transverse_toward_bank(
+            trans_flow,
+            profile_angles,
+            profile_points_xy,
+            axis_point_xy,
+        )
+
         repr_trans_flow = flow.repr_trans_velocity(
             wd, trans_flow, path_distances, configuration.ship_params.depth
         )
@@ -54,7 +106,7 @@ def run(
         transverse_velocity[0],
         transverse_velocity[1] if len(transverse_velocity) > 1 else None,
         (
-            transverse_velocity[1] - transverse_velocity[0]
+            (transverse_velocity[1] - transverse_velocity[0])
             if len(transverse_velocity) > 1
             else None
         ),
@@ -70,10 +122,11 @@ def run(
         "start (rkm)",
         "eind (rkm)",
         "dwarsstroomdebiet (m3/s)",
-        "max. dwarsstroomsnelheid magnitude (m3/s)",
+        "max. dwarsstroomsnelheid magnitude (m/s)",
         "criterium (m/s)",
         "overschrijding (0=FALSE,1=TRUE)",
     )
+
     discharges, crit_values, xy_blocks = TransverseDischarge().compute(
         rkm,
         path_distances,
@@ -102,229 +155,133 @@ def run(
         figfile,
     )
 
+    # ============================================================
+    # TIDE (optional)
+    # ============================================================
+    if not configuration.general.bool_flags.get("tide", False):
+        return
 
-def prepare_data_for_excel(xy_block, discharge, crit_value):
-    CONVERT_M_TO_KM = 1000
-    x_start = [xy[0][0] / CONVERT_M_TO_KM for xy in xy_block]
-    x_end = [xy[0][-1] / CONVERT_M_TO_KM for xy in xy_block]
-    y_max = [max(abs(xy[1])) for xy in xy_block]
-    exceedance = y_max > abs(crit_value)
-    return (x_start, x_end, discharge, y_max, crit_value, exceedance)
+    if tide is None:
+        warnings.warn(
+            "Tide=True but no MAP/time tide inputs provided (likely Fourier input). Tide analysis skipped.",
+            RuntimeWarning,
+        )
+        return
 
+    # --- tide sanity checks ---
+    n_cases = len(tide.ucx)
+    if n_cases == 0:
+        return
 
-def _alongstream_velocity(
-    u: np.ndarray, v: np.ndarray, angles_deg: np.ndarray
-) -> np.ndarray:
-    """Along-stream velocity component: u*cos(theta) + v*sin(theta)."""
-    th = np.radians(angles_deg)
-    return u * np.cos(th) + v * np.sin(th)
+    tide_ucx = [np.asarray(a) for a in tide.ucx]
+    tide_ucy = [np.asarray(a) for a in tide.ucy]
+    tide_h = [np.asarray(a) for a in tide.h]
 
+    for k in range(n_cases):
+        if tide_ucx[k].ndim != 2:
+            raise ValueError(
+                f"Tide inputs require (nt, n) arrays. Case {k}: ucx shape={tide_ucx[k].shape}"
+            )
+        if (
+            tide_ucy[k].shape != tide_ucx[k].shape
+            or tide_h[k].shape != tide_ucx[k].shape
+        ):
+            raise ValueError(
+                f"Tide inputs shape mismatch. Case {k}: ucx={tide_ucx[k].shape}, ucy={tide_ucy[k].shape}, h={tide_h[k].shape}"
+            )
 
-def run_tide(
-    ucx: list[np.ndarray],  # each: (nt, n)
-    ucy: list[np.ndarray],  # each: (nt, n)
-    water_depth: list[np.ndarray],  # each: (nt, n)
-    path_distances: np.ndarray,  # (n,)
-    profile_angles: np.ndarray,  # (n,)
-    rkm: np.ndarray,  # (n,)
-    configuration,
-    outputfile: Path,
-    figfile_tide_vel: Path,
-    figfile_tide_q: Path,
-    figfile_tide_upar: Path,  # <-- nieuw
-    time_list: list[np.ndarray | None],  # <-- nieuw
-) -> None:
-    """
-    Tide analysis (only called when TideAnalysis=True and tide data is present).
+    nt, n = tide_ucx[0].shape
+    for k in range(1, n_cases):
+        if tide_ucx[k].shape != (nt, n):
+            raise ValueError("Tide inputs must have identical (nt, n) across cases.")
 
-    Produces:
-      - transverse velocity at peak ebb per rKm (Reference / WithIntervention / Difference)
-      - transverse velocity at peak flood per rKm (Reference / WithIntervention / Difference)
-      - max transverse discharge during the tide (Reference / WithIntervention / Difference)
-      - figure of ebb/flood transverse velocities
-      - old-style crossflow figure at time of max discharge (driven by Difference if available)
-    """
-    SHEET_LABELS = ("Reference", "WithIntervention", "Difference")
-    CRITERIA: tuple[float, float] = (0.15, 0.3)
-
+    # Constants used for tide products
     ship_depth = configuration.ship_params.depth
     ship_length = configuration.ship_params.length
     invertx = configuration.general.bool_flags.get("invertxaxis", False)
 
-    # --- basic checks ---
-    upar_series_list = []
-    n_cases = len(ucx)
-    if n_cases == 0:
-        return
-
-    # ensure arrays are numpy and correct shape
-    ucx = [np.asarray(a) for a in ucx]
-    ucy = [np.asarray(a) for a in ucy]
-    water_depth = [np.asarray(a) for a in water_depth]
+    # --- Compute upar_tn and tv_tn once per case using kernel (flow.py) ---
+    upar_series = []
+    tv_series = []
+    idx_ebb_list = []
+    idx_flood_list = []
+    tv_ebb_list = []
+    tv_flood_list = []
 
     for k in range(n_cases):
-        if ucx[k].ndim != 2:
-            raise ValueError(
-                f"run_tide requires (nt, n) arrays. Case {k} ucx shape={ucx[k].shape}"
-            )
-        if ucy[k].shape != ucx[k].shape or water_depth[k].shape != ucx[k].shape:
-            raise ValueError(
-                f"run_tide: ucx/ucy/h shapes must match. Case {k} got ucx={ucx[k].shape}, ucy={ucy[k].shape}, h={water_depth[k].shape}"
-            )
+        # (nt, n) time series for one case
 
-    nt, n = ucx[0].shape
-    for k in range(1, n_cases):
-        if ucx[k].shape[0] != nt or ucx[k].shape[1] != n:
-            raise ValueError("run_tide: all cases must have same (nt, n) shape.")
-
-    rkm_km = rkm / 1000.0
-
-    # ============================================================
-    # 1) Compute peak ebb/flood transverse velocity per rKm
-    # ============================================================
-    ebb_list = []
-    flood_list = []  
-    idx_ebb_list = []  
-    idx_flood_list = []  
-    ebb_valid_frac_list = []
-    flood_valid_frac_list = []
-
-    for k in range(n_cases):
-        upar_pos = np.full(n, -np.inf)
-        upar_neg = np.full(n, np.inf)
-        idx_ebb = np.full(n, -1, dtype=int)
-        idx_flood = np.full(n, -1, dtype=int)
-        tv_ebb = np.full(n, np.nan, dtype=float)
-        tv_flood = np.full(n, np.nan, dtype=float)
-        upar_tn = np.empty((nt, n), dtype=float)
-
-        for t in range(nt):
-            u_t = ucx[k][t]
-            v_t = ucy[k][t]
-            h_t = water_depth[k][t]
-            upar_tn[t] = _alongstream_velocity(u_t, v_t, profile_angles)
-
-            # representative transverse velocity at this time
-            w_t = flow.trans_velocity(u_t, v_t, profile_angles)
-            tv_t = flow.repr_trans_velocity(h_t, w_t, path_distances, ship_depth)
-
-            # along-stream for ebb/flood selection
-            upar = _alongstream_velocity(u_t, v_t, profile_angles)
-
-            # ebb: strongest downstream => maximum positive upar
-            mpos = (upar > 0.0) & (upar > upar_pos)
-            if np.any(mpos):
-                upar_pos[mpos] = upar[mpos]
-                idx_ebb[mpos] = t
-                tv_ebb[mpos] = tv_t[mpos]
-
-            # flood: strongest upstream => most negative upar
-            mneg = (upar < 0.0) & (upar < upar_neg)
-            if np.any(mneg):
-                upar_neg[mneg] = upar[mneg]
-                idx_flood[mneg] = t
-                tv_flood[mneg] = tv_t[mneg]
-
-        mean_u = np.nanmean(upar_tn, axis=0)
-        max_u = np.nanmax(upar_tn, axis=0)
-        min_u = np.nanmin(upar_tn, axis=0)
-        amp_u = max_u - min_u
-
-        frac_neg = np.mean(upar_tn < 0.0, axis=0)
-        frac_pos = np.mean(upar_tn > 0.0, axis=0)
-
-        ebb_delta = max_u - mean_u
-        flood_delta = mean_u - min_u
-
-        #TODO probably would be better to place these limits in the config section, for now hardcoded. 
-        EPS_ABS = 0.05  # m/s: noise floor
-        EPS_AMP = 0.10  # m/s: required swing for meaningful tide
-        EPS_DELTA = 0.3  # m/s: peak distinctness vs mean
-        MIN_FRAC = 0.10  # at least 10% sign presence
-
-        ebb_valid = (
-            (frac_pos >= MIN_FRAC)
-            & (max_u >= EPS_ABS)
-            & (amp_u >= EPS_AMP)
-            & (ebb_delta >= EPS_DELTA)
-        )
-        flood_valid = (
-            (frac_neg >= MIN_FRAC)
-            & (min_u <= -EPS_ABS)
-            & (amp_u >= EPS_AMP)
-            & (flood_delta >= EPS_DELTA)
+        upar_tn, tv_tn = flow.tide_time_series(
+            tide_ucx[k],
+            tide_ucy[k],
+            tide_h[k],
+            path_distances,
+            profile_angles,
+            ship_depth,
         )
 
-        # apply masks (so invalid points become NaN and time index -1)
-        tv_ebb[~ebb_valid] = np.nan
-        tv_flood[~flood_valid] = np.nan
-        idx_ebb[~ebb_valid] = -1
-        idx_flood[~flood_valid] = -1
+        # Reorient so that:
+        # positive = toward bank
+        # negative = toward river axis
+        tv_tn = flow.orient_transverse_toward_bank(
+            tv_tn,
+            profile_angles,
+            profile_points_xy,
+            axis_point_xy,
+        )
 
-        # store results (masked)
-        ebb_list.append(tv_ebb)
-        flood_list.append(tv_flood)
+        idx_ebb, idx_flood, tv_ebb, tv_flood = flow.tide_peaks_from_upar(upar_tn, tv_tn)
+
+        upar_series.append(upar_tn)
+        tv_series.append(tv_tn)
         idx_ebb_list.append(idx_ebb)
         idx_flood_list.append(idx_flood)
+        tv_ebb_list.append(tv_ebb)
+        tv_flood_list.append(tv_flood)
 
-        # store validity fractions for figure annotation
-        ebb_valid_frac = float(
-            np.mean(np.isfinite(tv_ebb))
-        )  # fraction points with meaningful ebb
-        flood_valid_frac = float(
-            np.mean(np.isfinite(tv_flood))
-        )  # fraction points with meaningful flood
+    idx_tvmax_list = []
+    tv_max_list = []
 
-        # keep per-case stats
-        ebb_valid_frac_list.append(ebb_valid_frac)
-        flood_valid_frac_list.append(flood_valid_frac)
-        upar_series_list.append(upar_tn)
+    for upar_tn, tv_tn in zip(upar_series, tv_series):
+        idx_tvmax, tv_max, _ = flow.tide_max_transverse_per_point(
+            upar_tn,
+            tv_tn,
+        )
+        idx_tvmax_list.append(idx_tvmax)
+        tv_max_list.append(tv_max)
 
-    # add Difference for ebb/flood if intervention exists
+    # Difference if intervention exists
     if n_cases > 1:
-        ebb_list.append(ebb_list[1] - ebb_list[0])
-        flood_list.append(flood_list[1] - flood_list[0])
+        tv_max_list.append(tv_max_list[1] - tv_max_list[0])
     else:
-        ebb_list.append(None)
-        flood_list.append(None)
+        tv_max_list.append(None)
 
+    # Difference for ebb/flood (if intervention)
     if n_cases > 1:
-        ebb_valid_frac_list.append(float(np.mean(np.isfinite(ebb_list[2]))))
-        flood_valid_frac_list.append(float(np.mean(np.isfinite(flood_list[2]))))
+        tv_ebb_list.append(tv_ebb_list[1] - tv_ebb_list[0])
+        tv_flood_list.append(tv_flood_list[1] - tv_flood_list[0])
     else:
-        ebb_valid_frac_list.append(np.nan)
-        flood_valid_frac_list.append(np.nan)
+        tv_ebb_list.append(None)
+        tv_flood_list.append(None)
 
-    # ============================================================
-    # 2) Max transverse discharge over the tide
-    # ============================================================
+    # --- Max transverse discharge over tide (use tv_series directly) ---
     td = TransverseDischarge()
-    maxQ_value = [np.nan] * 3  # ref, int, diff
-    maxQ_time_index = [-1] * 3
-    maxQ_payload = [None] * 3  # payload for excel table
-    maxQ_xy_blocks = [None] * 3  # for plotting (old style)
-    maxQ_crit_values = [None] * 3
-    maxQ_tv_at_t = [None] * 3
 
-    def _maxQ_for_tv_time_series(tv_tn: np.ndarray):
-        """Return qmax, t_best, (payload, xy_blocks, crit_values, tv_at_tbest)."""
+    def _maxQ_for_tv_tn(tv_tn: np.ndarray):
         qmax = -np.inf
         t_best = -1
         payload_best = None
         xy_best = None
         crit_best = None
-        tv_best = None
 
         for t in range(tv_tn.shape[0]):
-            tv_t = tv_tn[t]
             discharges, crit_values, xy_blocks = td.compute(
-                rkm, path_distances, [tv_t], ship_depth, ship_length, CRITERIA
+                rkm, path_distances, [tv_tn[t]], ship_depth, ship_length, CRITERIA
             )
             if discharges[0].size == 0:
                 continue
-
-            i = int(np.nanargmax(np.abs(discharges[0])))
-            q_t = float(np.abs(discharges[0][i]))
+            j = int(np.nanargmax(np.abs(discharges[0])))
+            q_t = float(np.abs(discharges[0][j]))
             if q_t > qmax:
                 qmax = q_t
                 t_best = t
@@ -333,99 +290,95 @@ def run_tide(
                 )
                 xy_best = xy_blocks
                 crit_best = crit_values
-                tv_best = tv_t
 
         if qmax == -np.inf:
-            return np.nan, -1, None, None, None, None
-        return qmax, t_best, payload_best, xy_best, crit_best, tv_best
+            return np.nan, -1, None, None, None
+        return qmax, t_best, payload_best, xy_best, crit_best
 
-    # Build representative transverse velocity time series per case
-    tv_series = []
-    for k in range(n_cases):
-        tv_tn = np.empty((nt, n), dtype=float)
-        for t in range(nt):
-            w_t = flow.trans_velocity(ucx[k][t], ucy[k][t], profile_angles)
-            tv_tn[t] = flow.repr_trans_velocity(
-                water_depth[k][t], w_t, path_distances, ship_depth
-            )
-        tv_series.append(tv_tn)
+    maxQ_value = []
+    maxQ_time_index = []
+    maxQ_payload = []
 
-    # Compute maxQ for reference and intervention
-    q0, t0, p0, xy0, c0, tv0 = _maxQ_for_tv_time_series(tv_series[0])
-    maxQ_value[0], maxQ_time_index[0], maxQ_payload[0] = q0, t0, p0
-    maxQ_xy_blocks[0], maxQ_crit_values[0], maxQ_tv_at_t[0] = xy0, c0, tv0
-
+    for tv_tn in tv_series:
+        q, tbest, payload, xy, crit = _maxQ_for_tv_tn(tv_tn)
+        maxQ_value.append(q)
+        maxQ_time_index.append(tbest)
+        maxQ_payload.append(payload)
     if n_cases > 1:
-        q1, t1, p1, xy1, c1, tv1 = _maxQ_for_tv_time_series(tv_series[1])
-        maxQ_value[1], maxQ_time_index[1], maxQ_payload[1] = q1, t1, p1
-        maxQ_xy_blocks[1], maxQ_crit_values[1], maxQ_tv_at_t[1] = xy1, c1, tv1
-
-        # Difference time series and maxQ
         tv_diff = tv_series[1] - tv_series[0]
-        qd, td_, pd_, xyd_, cd_, tvd_ = _maxQ_for_tv_time_series(tv_diff)
-        maxQ_value[2], maxQ_time_index[2], maxQ_payload[2] = qd, td_, pd_
-        maxQ_xy_blocks[2], maxQ_crit_values[2], maxQ_tv_at_t[2] = xyd_, cd_, tvd_
+        q, tbest, payload, xy, crit = _maxQ_for_tv_tn(tv_diff)
+        maxQ_value.append(q)
+        maxQ_time_index.append(tbest)
+        maxQ_payload.append(payload)
+    else:
+        maxQ_value.append(np.nan)
+        maxQ_time_index.append(-1)
+        maxQ_payload.append(None)
 
-    # ============================================================
-    # 3) Write Excel
-    # ============================================================
-    with pd.ExcelWriter(outputfile) as writer:
-        # Ebb velocities
-        for label, tv in zip(SHEET_LABELS, ebb_list):
+    # --- Figures ---
+    plotter.create_figure_tide_velocities(
+        rkm,
+        tv_ebb_list,
+        tv_flood_list,
+        invertx,
+        tide.fig_vel,
+        annotation=None,
+    )
+
+    
+    # --- Append tide sheets to the original Excel files ---
+    rkm_km = rkm / 1000.0
+    
+    # 1) Append tide velocity-type sheets to transverse_velocity.xlsx
+    with pd.ExcelWriter(
+        outputfiles[0],
+        mode="a",
+        if_sheet_exists="replace",
+        engine="openpyxl",
+    ) as writer:
+        velocity_column_labels = ("raai (rkm)", "dwarsstroomsnelheid (m/s)")
+    
+        for label, tv in zip(SHEET_LABELS, tv_ebb_list):
             if tv is None:
                 continue
             support.to_excel(
                 writer,
-                ("raai (rkm)", "dwarsstroomsnelheid_ebb (m/s)"),
+                velocity_column_labels,
                 f"{label}_Ebb",
                 rkm_km,
                 tv,
             )
-
-        # Flood velocities
-        for label, tv in zip(SHEET_LABELS, flood_list):
+    
+        for label, tv in zip(SHEET_LABELS, tv_flood_list):
             if tv is None:
                 continue
             support.to_excel(
                 writer,
-                ("raai (rkm)", "dwarsstroomsnelheid_flood (m/s)"),
+                velocity_column_labels,
                 f"{label}_Flood",
                 rkm_km,
                 tv,
             )
-
-        support.to_excel(
-            writer,
-            ("raai (rkm)", "t_index_peak_ebb"),
-            "Reference_tEbb",
-            rkm_km,
-            idx_ebb_list[0],
-        )
-        support.to_excel(
-            writer,
-            ("raai (rkm)", "t_index_peak_flood"),
-            "Reference_tFlood",
-            rkm_km,
-            idx_flood_list[0],
-        )
-        if n_cases > 1:
+    
+        for label, tv in zip(SHEET_LABELS, tv_max_list):
+            if tv is None:
+                continue
             support.to_excel(
                 writer,
-                ("raai (rkm)", "t_index_peak_ebb"),
-                "WithIntervention_tEbb",
+                velocity_column_labels,
+                f"{label}_MaxTransverse",
                 rkm_km,
-                idx_ebb_list[1],
+                tv,
             )
-            support.to_excel(
-                writer,
-                ("raai (rkm)", "t_index_peak_flood"),
-                "WithIntervention_tFlood",
-                rkm_km,
-                idx_flood_list[1],
-            )
-
-        # Max discharge tables
-        COLUMN_LABELS = (
+    
+    # 2) Append tide discharge sheets to transverse_flow.xlsx
+    with pd.ExcelWriter(
+        outputfiles[1],
+        mode="a",
+        if_sheet_exists="replace",
+        engine="openpyxl",
+    ) as writer:
+        discharge_column_labels = (
             "start (rkm)",
             "eind (rkm)",
             "dwarsstroomdebiet (m3/s)",
@@ -433,104 +386,59 @@ def run_tide(
             "criterium (m/s)",
             "overschrijding (0=FALSE,1=TRUE)",
         )
+    
         for i, label in enumerate(SHEET_LABELS):
             if maxQ_payload[i] is None:
                 continue
             support.to_excel(
                 writer,
-                COLUMN_LABELS,
-                f"{label}_MaxDischarge_t{maxQ_time_index[i]}",
+                discharge_column_labels,
+                f"{label}_MaxQ",
                 *maxQ_payload[i],
             )
 
-        # Simple summary sheet
-        summary_labels = ["Reference", "WithIntervention", "Difference"]
-        summary_q = [maxQ_value[0], maxQ_value[1], maxQ_value[2]]
-        summary_t = [maxQ_time_index[0], maxQ_time_index[1], maxQ_time_index[2]]
-        df = pd.DataFrame(
-            {"Case": summary_labels, "Qmax (m3/s)": summary_q, "t_index": summary_t}
+
+    # MaxQ snapshot plot: just show reference (simple & robust)
+    if maxQ_time_index[0] >= 0:
+        t_plot = maxQ_time_index[0]
+        tv_ref_plot = tv_series[0][t_plot]
+        discharges, crit_values, xy_blocks = td.compute(
+            rkm, path_distances, [tv_ref_plot], ship_depth, ship_length, CRITERIA
         )
-        df.to_excel(writer, sheet_name="Summary_MaxQ", index=False)
-
-    # ============================================================
-    # 4) Figures
-    # ============================================================
-
-    def _fmt_pct(x):
-        return "n/a" if (x is None or not np.isfinite(x)) else f"{100*x:.0f}%"
-
-    # same thresholds you used (keep consistent)
-    thr_text = f"criteria: |u∥|≥{EPS_ABS:.2f} m/s, amp≥{EPS_AMP:.2f} m/s, Δpeak≥{EPS_DELTA:.2f} m/s, frac≥{MIN_FRAC:.2f}"
-
-    ebb_text = f"valid ebb points: Ref {_fmt_pct(ebb_valid_frac_list[0])}"
-    flood_text = f"valid flood points: Ref {_fmt_pct(flood_valid_frac_list[0])}"
-
-    if n_cases > 1:
-        ebb_text += f", Plan {_fmt_pct(ebb_valid_frac_list[1])}, Diff {_fmt_pct(ebb_valid_frac_list[2])}"
-        flood_text += f", Plan {_fmt_pct(flood_valid_frac_list[1])}, Diff {_fmt_pct(flood_valid_frac_list[2])}"
-
-    # extra warning when flood is basically absent
-    warn = ""
-    if np.isfinite(flood_valid_frac_list[0]) and flood_valid_frac_list[0] < 0.05:
-        warn = "WARNING: flood signal largely absent (few/none negative u∥)."
-
-    tide_annotation = f"{ebb_text} | {flood_text}\n{thr_text}"
-    if warn:
-        tide_annotation += f"\n{warn}"
-
-    # Figure 1: ebb/flood transverse velocities
-    plotter = plotting.CrossFlow()
-    plotter.create_figure_tide_velocities(
-        rkm,
-        ebb_list,
-        flood_list,
-        invertx,
-        figfile_tide_vel,
-        annotation=tide_annotation,
-    )
-
-    if n_cases > 1 and maxQ_tv_at_t[2] is not None:
-        tv_plot = [maxQ_tv_at_t[0], maxQ_tv_at_t[1], maxQ_tv_at_t[2]]
-        xy_plot = maxQ_xy_blocks[
-            2
-        ]  
-        crit_plot = maxQ_crit_values[2]
-
         plotter.create_figure(
             rkm,
-            tv_plot,
-            maxQ_xy_blocks[2],
-            maxQ_crit_values[2],
+            [tv_ref_plot],
+            xy_blocks,
+            crit_values,
             invertx,
-            figfile_tide_q,
-        )
-    elif maxQ_tv_at_t[0] is not None:
-        plotter.create_figure(
-            rkm,
-            [maxQ_tv_at_t[0]],
-            maxQ_xy_blocks[0],
-            maxQ_crit_values[0],
-            invertx,
-            figfile_tide_q,
+            tide.fig_qmax,
         )
 
-    # Reference time axis
+    # Alongstream u_parallel time series (Reference) with per-rkm points
     time_ref = None
-    if time_list and time_list[0] is not None:
-        time_ref = np.asarray(time_list[0])
+    if tide.time_list and tide.time_list[0] is not None:
+        time_ref = np.asarray(tide.time_list[0])
 
     plotter.create_figure_alongstream_timeseries(
         time_ref,
-        upar_series_list[0],  # u∥(t, rkm) reference
+        upar_series[0],
         rkm,
-        figfile_tide_upar,
-        threshold=EPS_ABS,
-        annotation=(
-            f"criteria: |u∥|≥{EPS_ABS:.2f} m/s, amp≥{EPS_AMP:.2f} m/s, "
-            f"Δpeak≥{EPS_DELTA:.2f} m/s, frac≥{MIN_FRAC:.2f}"
-        ),
-        idx_ebb=idx_ebb_list[0],  # <-- exact per-rkm ebb times
-        idx_flood=idx_flood_list[0],  # <-- exact per-rkm flood times
+        tide.fig_upar,
+        threshold=None,
+        annotation=None,
+        idx_ebb=idx_ebb_list[0],
+        idx_flood=idx_flood_list[0],
+    )
+
+    plotter.create_figure_tide_max_transverse(
+        rkm,
+        tv_max_list,
+        time_ref,
+        upar_series[0],
+        idx_tvmax_list[0],
+        tv_series[0],
+        tide.fig_max_tv,
+        invertx,
     )
 
 

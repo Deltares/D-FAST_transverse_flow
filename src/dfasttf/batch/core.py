@@ -9,9 +9,71 @@ from dfasttf.batch.dflowfm import (
     Variables,
     clip_simulation_data,
     load_simulation_data,
+    check_ship_length_vs_profile_resolution,
 )
 from dfasttf.batch.plotting import Plot2D, construct_figure_filename
 from dfasttf.config import Config
+
+
+def build_profile_points_xy(
+    profile_line: LineString,
+    path_distances: np.ndarray,
+) -> np.ndarray:
+    """
+    Convert cumulative distances along the profile line to XY coordinates.
+
+    Returns
+    -------
+    np.ndarray
+        Array of shape (n, 2) with XY coordinates of the profile sample points.
+    """
+    d = np.asarray(path_distances, dtype=float)
+    d = np.clip(d, 0.0, float(profile_line.length))
+
+    return np.array(
+        [profile_line.interpolate(float(di)).coords[0][:2] for di in d],
+        dtype=float,
+    )
+
+
+def get_axis_point_xy(
+    profile_line: LineString,
+    riverkm: LineString,
+) -> np.ndarray:
+    """
+    Determine the river-axis point associated with a profile line.
+
+    Preferred behaviour:
+    - use the actual intersection point between profile_line and riverkm
+    - if multiple points exist, take the one closest to the profile midpoint
+    - if no intersection exists, fall back to the nearest point on riverkm
+      to the profile midpoint
+
+    Returns
+    -------
+    np.ndarray
+        XY coordinate of the axis point, shape (2,)
+    """
+    inter = profile_line.intersection(riverkm)
+    mid = profile_line.interpolate(profile_line.length / 2.0)
+
+    if inter.is_empty:
+        s = riverkm.project(mid)
+        p = riverkm.interpolate(s)
+        return np.array(p.coords[0][:2], dtype=float)
+
+    if inter.geom_type == "Point":
+        return np.array(inter.coords[0][:2], dtype=float)
+
+    if inter.geom_type == "MultiPoint":
+        pts = list(inter.geoms)
+        p = min(pts, key=lambda pt: pt.distance(mid))
+        return np.array(p.coords[0][:2], dtype=float)
+
+    # fallback for uncommon intersection geometries
+    s = riverkm.project(mid)
+    p = riverkm.interpolate(s)
+    return np.array(p.coords[0][:2], dtype=float)
 
 
 def run_analysis(
@@ -21,12 +83,8 @@ def run_analysis(
     prof_line_df: DataFrame | None,
     riverkm: LineString | None,
 ):
-
-    tide = configuration.general.bool_flags.get("tideanalysis", False)
-    simulation_data = load_simulation_data(configuration, section, keep_time=False)
-    simulation_data_tide = (
-        load_simulation_data(configuration, section, keep_time=True) if tide else None
-    )
+    # Loader returns both snapshot and tide datasets
+    simulation_data, simulation_data_tide = load_simulation_data(configuration, section)
 
     plot_actions = {
         "1D": lambda: run_1d_analysis(
@@ -39,10 +97,15 @@ def run_analysis(
             riverkm,
         ),
         "2D": lambda: run_2d_analysis(
-            configuration, section, simulation_data, variables, prof_line_df
+            configuration,
+            section,
+            simulation_data,
+            variables,
+            prof_line_df,
         ),
     }
-    plot_actions["both"] = lambda: (plot_actions["1D"], plot_actions["2D"])
+
+    plot_actions["both"] = lambda: (plot_actions["1D"](), plot_actions["2D"]())
 
     try:
         plot_actions[configuration.plotsettings.type]()
@@ -50,6 +113,7 @@ def run_analysis(
         raise ValueError(
             f"Unknown plot type {configuration.plotsettings.type}."
         ) from exc
+
 
 def run_1d_analysis(
     configuration: Config,
@@ -67,17 +131,18 @@ def run_1d_analysis(
     for geom_idx, profile_line in enumerate(
         tqdm(prof_line_df.geometry, desc="geometry", position=0, leave=True)
     ):
-        tide = configuration.general.bool_flags.get("tideanalysis", False)
+        tide = configuration.general.bool_flags.get("tide", False)
         profile_coords = np.array(profile_line.coords)
         profile_index = str(prof_line_df.iloc[geom_idx].name)
         profile_data = {var: [] for var in variables._fields}
 
         profile_data_tide = None
-        if tide:
+        if tide and simulation_data_tide is not None:
             profile_data_tide = {var: [] for var in variables._fields}
             profile_data_tide["time"] = []
 
         bounds = profile_line.bounds
+        has_slice = False
 
         for idx, _ in enumerate(
             tqdm(simulation_data, desc="simulation data", position=0, leave=True)
@@ -96,15 +161,20 @@ def run_1d_analysis(
             if sliced_ugrid is None:
                 continue
 
+            has_slice = True
+
             rkm, path_distances, isegment, iface = sliced_ugrid
             angles = np.array(prof_line_df["angle"].iloc[geom_idx][isegment])
+
+            profile_points_xy = build_profile_points_xy(profile_line, path_distances)
+            axis_point_xy = get_axis_point_xy(profile_line, riverkm)
+
             for var, name in variables._asdict().items():
                 profile_data[var].append(
                     dflowfm.get_profile_data(data, name, iface, time_index_from_last=0)
                 )
 
             # tide extraction (only if enabled in config and map files are provided)
-
             if tide and simulation_data_tide is not None:
                 data_tide = clip_simulation_data(
                     simulation_data_tide[idx],
@@ -129,7 +199,7 @@ def run_1d_analysis(
                     "ucy",
                     "h",
                     "uc",
-                } 
+                }
 
                 for var, name in variables._asdict().items():
                     ti = None if var in TIME_SERIES_VARS else 0
@@ -139,10 +209,18 @@ def run_1d_analysis(
                         )
                     )
 
-        if (
-            sliced_ugrid is None
-        ):  # profile line does not slice reference nor intervention simulation data
-            continue
+            checked_profile_resolution = False
+            if not checked_profile_resolution:
+                check_ship_length_vs_profile_resolution(
+                    path_distances,
+                    configuration.ship_params.length,
+                    section,
+                    profile_index,
+                )
+                checked_profile_resolution = True
+
+        if not has_slice:
+            continue  # profile line does not slice reference nor intervention simulation data
 
         save_1d_figures(
             configuration,
@@ -153,6 +231,8 @@ def run_1d_analysis(
             angles,
             rkm,
             path_distances,
+            profile_points_xy,
+            axis_point_xy,
         )
 
         bedlevel = data[variables.bl].where(lambda x: x != 999)
@@ -173,6 +253,8 @@ def save_1d_figures(
     angles: np.ndarray,
     rkm: np.ndarray,
     path_distances: np.ndarray,
+    profile_points_xy: np.ndarray,
+    axis_point_xy: np.ndarray,
 ):
     """Generate and save 1D figures and CSV files."""
     figdir = configuration.plotsettings.options.figure_save_directory
@@ -194,6 +276,7 @@ def save_1d_figures(
         outputfile,
     )
 
+    # ---- Snapshot cross-flow outputs ----
     outputfiles = []
     base = f"{section}_profile{profile_index}_transverse_velocity"
     outputfiles.append((outputdir / base).with_suffix(".xlsx"))
@@ -202,6 +285,39 @@ def save_1d_figures(
     figfile_cross = construct_figure_filename(figdir, base, figext)
     outputfiles.append((outputdir / base).with_suffix(".xlsx"))
 
+    # ---- Tide analysis inputs (optional) ----
+    tide_flag = configuration.general.bool_flags.get("tide", False)
+    tide_inputs = None
+
+    if (
+        tide_flag
+        and profile_data_tide is not None
+        and len(profile_data_tide["ucx"]) > 0
+    ):
+        base = f"{section}_profile{profile_index}_tide_transverse_velocity"
+        figfile_tide_vel = construct_figure_filename(figdir, base, figext)
+
+        base = f"{section}_profile{profile_index}_tide_transverse_flow_maxQ"
+        figfile_tide_q = construct_figure_filename(figdir, base, figext)
+
+        base = f"{section}_profile{profile_index}_tide_alongstream_velocity_time"
+        figfile_tide_upar = construct_figure_filename(figdir, base, figext)
+
+        base = f"{section}_profile{profile_index}_tide_max_transverse"
+        figfile_tide_max_tv = construct_figure_filename(figdir, base, figext)
+
+        tide_inputs = cross_flow.TideInputs(
+            ucx=profile_data_tide["ucx"],
+            ucy=profile_data_tide["ucy"],
+            h=profile_data_tide["h"],
+            time_list=profile_data_tide["time"],
+            fig_vel=figfile_tide_vel,
+            fig_qmax=figfile_tide_q,
+            fig_upar=figfile_tide_upar,
+            fig_max_tv=figfile_tide_max_tv,
+        )
+
+    # ---- Single call: snapshot always, tide optional inside run() ----
     cross_flow.run(
         profile_data["ucx"],
         profile_data["ucy"],
@@ -212,42 +328,9 @@ def save_1d_figures(
         configuration,
         figfile_cross,
         outputfiles,
-    )
-
-    # ---- Tide analysis ----
-    tide = configuration.general.bool_flags.get("tideanalysis", False)
-
-    # If tide is off or tide data missing -> done
-    if not tide or profile_data_tide is None:
-        return
-
-    # Tide outputs
-    base = f"{section}_profile{profile_index}_tide_crossflow"
-    tide_outfile = (outputdir / base).with_suffix(".xlsx")
-
-    base = f"{section}_profile{profile_index}_tide_transverse_velocity"
-    figfile_tide_vel = construct_figure_filename(figdir, base, figext)
-
-    base = f"{section}_profile{profile_index}_tide_transverse_flow_maxQ"
-    figfile_tide_q = construct_figure_filename(figdir, base, figext)
-
-    base = f"{section}_profile{profile_index}_tide_alongstream_velocity_time"
-    figfile_tide_upar = construct_figure_filename(figdir, base, figext)
-
-    # Tide analysis call
-    cross_flow.run_tide(
-        profile_data_tide["ucx"],
-        profile_data_tide["ucy"],
-        profile_data_tide["h"],
-        path_distances,
-        angles,
-        rkm,
-        configuration,
-        tide_outfile,
-        figfile_tide_vel,
-        figfile_tide_q,
-        figfile_tide_upar,
-        profile_data_tide["time"],
+        profile_points_xy,
+        axis_point_xy,
+        tide=tide_inputs,
     )
 
 

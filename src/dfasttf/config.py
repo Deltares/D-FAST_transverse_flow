@@ -60,14 +60,15 @@ class Config:
         self.plotsettings = PlotSettings(self.configdir, self.data)
 
 
-def get_output_files(
-    config: ConfigParser, configdir: Path, section: str, tide: bool = False
-):
-    output_files = []
-    ref_key = "ReferenceTide" if tide else "Reference"
-    int_key = "WithInterventionTide" if tide else "WithIntervention"
 
-    ref = config.get(section, ref_key, fallback="")
+def get_output_files(
+    config: ConfigParser,
+    configdir: Path,
+    section: str,
+) -> list[str]:
+    output_files = []
+
+    ref = config.get(section, "Reference", fallback="")
     if ref:
         output_files.append(
             ConfigFileOperations._get_absolute_path_from_relative_path(
@@ -75,8 +76,8 @@ def get_output_files(
             )
         )
 
-    if int_key in config[section]:
-        wi = config.get(section, int_key)
+    wi = config.get(section, WITHINTERVENTION_KEY, fallback="")
+    if wi:
         output_files.append(
             ConfigFileOperations._get_absolute_path_from_relative_path(
                 str(configdir), wi
@@ -112,7 +113,7 @@ class GeneralSettings:
                 "InvertXAxis",
                 "WaterUpliftCorrection",
                 "BedChangeCorrection",
-                "TideAnalysis",
+                "Tide",
             ]
         }
 
