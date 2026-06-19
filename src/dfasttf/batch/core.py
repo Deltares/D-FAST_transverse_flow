@@ -9,9 +9,10 @@ from dfasttf.batch.dflowfm import (
     Variables,
     clip_simulation_data,
     load_simulation_data,
-    check_ship_length_vs_profile_resolution,
+    check_ship_length_vs_grid_resolution,
 )
 from dfasttf.batch.plotting import Plot2D, construct_figure_filename
+from dfasttf.batch import tide as tide_module
 from dfasttf.config import Config
 
 
@@ -166,8 +167,21 @@ def run_1d_analysis(
             rkm, path_distances, isegment, iface = sliced_ugrid
             angles = np.array(prof_line_df["angle"].iloc[geom_idx][isegment])
 
-            #profile_points_xy = build_profile_points_xy(profile_line, path_distances)
-            #axis_point_xy = get_axis_point_xy(profile_line, riverkm)
+            
+            edge_coords = dflowfm.extract_edge_coords(
+                data,
+                dflowfm.VARN_FACE_X_BND,
+                dflowfm.VARN_FACE_Y_BND,
+            )
+            intersected_edge_coords = edge_coords[iface]
+
+            check_ship_length_vs_grid_resolution(
+                intersected_edge_coords,
+                configuration.ship_params.length,
+                section,
+                profile_index,
+            )
+
 
             for var, name in variables._asdict().items():
                 profile_data[var].append(
@@ -209,19 +223,6 @@ def run_1d_analysis(
                         )
                     )
 
-            checked_profile_resolution = False
-            if not checked_profile_resolution:
-                check_ship_length_vs_profile_resolution(
-                    path_distances,
-                    configuration.ship_params.length,
-                    section,
-                    profile_index,
-                )
-                checked_profile_resolution = True
-
-        if not has_slice:
-            continue  # profile line does not slice reference nor intervention simulation data
-
         save_1d_figures(
             configuration,
             section,
@@ -231,8 +232,6 @@ def run_1d_analysis(
             angles,
             rkm,
             path_distances,
-            #profile_points_xy,
-            #axis_point_xy,
         )
 
         bedlevel = data[variables.bl].where(lambda x: x != 999)
@@ -306,7 +305,7 @@ def save_1d_figures(
         base = f"{section}_profile{profile_index}_tide_max_transverse"
         figfile_tide_max_tv = construct_figure_filename(figdir, base, figext)
 
-        tide_inputs = cross_flow.TideInputs(
+        tide_inputs = tide_module.TideInputs(
             ucx=profile_data_tide["ucx"],
             ucy=profile_data_tide["ucy"],
             h=profile_data_tide["h"],

@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -6,9 +5,9 @@ from enum import Enum, auto
 
 
 class FileKind(Enum):
-    MAP = auto()       # has time dimension
-    FOU = auto()       # no time dimension, but supports original analysis
-    INVALID = auto()   # no time, missing required variables
+    MAP = auto()  # has time dimension
+    FOU = auto()  # no time dimension, but supports original analysis
+    INVALID = auto()  # no time, missing required variables
 
 
 @dataclass(frozen=True)
@@ -36,14 +35,9 @@ def detect_file_info(ds) -> FileInfo:
 
     Rules
     -----
-    - If dataset has a 'time' dimension -> MAP
-    - If dataset has no 'time' dimension, it must still contain the variables
-      required for the original analysis:
-        * sea_water_x_velocity
-        * sea_water_y_velocity
-        * sea_surface_height
-        * altitude
-      Otherwise -> INVALID
+    - MAP: has a time dimension and all variables required for the analysis
+    - FOU: has no time dimension, but still has all variables required for the analysis
+    - INVALID: missing one or more required variables
     """
     has_time = "time" in ds.dims
     std_names = _standard_names_present(ds)
@@ -62,25 +56,18 @@ def detect_file_info(ds) -> FileInfo:
     has_depth = required_depth.issubset(std_names)
 
     missing = []
+
     if not has_ucxy:
         missing.append("sea_water_x_velocity + sea_water_y_velocity")
     if not has_depth:
         missing.append("sea_surface_height + altitude")
 
-    if has_time:
-        return FileInfo(
-            kind=FileKind.MAP,
-            has_time=True,
-            has_ucxy=has_ucxy,
-            has_depth=has_depth,
-            missing=(),
-            vars_sample=vars_sample,
-        )
+    has_required_variables = len(missing) == 0
 
-    if missing:
+    if not has_required_variables:
         return FileInfo(
             kind=FileKind.INVALID,
-            has_time=False,
+            has_time=has_time,
             has_ucxy=has_ucxy,
             has_depth=has_depth,
             missing=tuple(missing),
@@ -88,8 +75,8 @@ def detect_file_info(ds) -> FileInfo:
         )
 
     return FileInfo(
-        kind=FileKind.FOU,
-        has_time=False,
+        kind=FileKind.MAP if has_time else FileKind.FOU,
+        has_time=has_time,
         has_ucxy=True,
         has_depth=True,
         missing=(),

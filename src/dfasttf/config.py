@@ -9,6 +9,7 @@ from dfastmi.batch.core import _get_output_dir
 from dfastmi.batch.PlotOptions import PlotOptions
 from dfastmi.config.ConfigFileOperations import ConfigFileOperations
 from dfastmi.io.DFastAnalysisConfigFileParser import DFastAnalysisConfigFileParser
+from xugrid import data
 
 GENERAL_SECTION = "General"
 BOUNDING_BOX_SECTION = "BoundingBox"
@@ -97,8 +98,10 @@ class GeneralSettings:
     riverkm: LineString | None
     profiles_file: Path | None
     bedchangefile: Path | None
-    bbox: list | None
-    tide_last_hours: float | None
+    bbox: list | None    
+    tide_start: str | None
+    tide_stop: str | None
+
 
     @classmethod
     def from_config(
@@ -117,7 +120,10 @@ class GeneralSettings:
             ]
         }
 
-        tide_last_hours = data.getfloat(GENERAL_SECTION, "TideLastHours", fallback=None)
+
+        tide_start = data.getstring(GENERAL_SECTION, "TideStart", fallback=None)
+        tide_stop = data.getstring(GENERAL_SECTION, "TideStop", fallback=None)
+
 
         riverkm = None
         if "RiverKM" in config[GENERAL_SECTION]:
@@ -154,7 +160,8 @@ class GeneralSettings:
             riverkm=riverkm,
             profiles_file=profiles_file,
             bedchangefile=bedchangefile,
-            tide_last_hours=tide_last_hours,
+            tide_start=tide_start,
+            tide_stop=tide_stop,
             bbox=bbox,
         )
 
