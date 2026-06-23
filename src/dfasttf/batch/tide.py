@@ -103,6 +103,7 @@ def append_tide_results(
     rkm: np.ndarray,
     path_distances: np.ndarray,
     profile_angles: np.ndarray,
+    profile_is_right: bool,
     configuration: Config,
     outputfiles: list[Path],
     td,
@@ -150,6 +151,13 @@ def append_tide_results(
             profile_angles,
             ship_depth,
         )
+
+        
+        tv_tn = flow.orient_transverse_by_profile_side(
+            tv_tn,
+            profile_is_right,
+        )
+
 
         idx_ebb, idx_flood, tv_ebb, tv_flood = flow.tide_peaks_from_upar(upar_tn, tv_tn)
 
@@ -290,20 +298,46 @@ def append_tide_results(
         annotation=None,
     )
 
+    
+    # MaxQ snapshot plot
     if maxQ_time_index[0] >= 0:
-        t_plot = maxQ_time_index[0]
-        tv_ref_plot = tv_series[0][t_plot]
-        discharges, crit_values, xy_blocks = td.compute(
+        tv_qmax_plot = []
+        xy_qmax_plot = []
+        crit_qmax_plot = []
+
+        # Reference
+        t_ref = maxQ_time_index[0]
+        tv_ref_plot = tv_series[0][t_ref]
+        tv_qmax_plot.append(tv_ref_plot)
+
+        discharges_ref, crit_values_ref, xy_blocks_ref = td.compute(
             rkm, path_distances, [tv_ref_plot], ship_depth, ship_length, CRITERIA
         )
+        xy_qmax_plot.extend(xy_blocks_ref)
+        crit_qmax_plot.extend(crit_values_ref)
+
+        # WithIntervention
+        if n_cases > 1 and maxQ_time_index[1] >= 0:
+            t_wi = maxQ_time_index[1]
+            tv_wi_plot = tv_series[1][t_wi]
+            tv_qmax_plot.append(tv_wi_plot)
+
+            discharges_wi, crit_values_wi, xy_blocks_wi = td.compute(
+                rkm, path_distances, [tv_wi_plot], ship_depth, ship_length, CRITERIA
+            )
+            xy_qmax_plot.extend(xy_blocks_wi)
+            crit_qmax_plot.extend(crit_values_wi)
+
         plotter.create_figure(
             rkm,
-            [tv_ref_plot],
-            xy_blocks,
-            crit_values,
+            tv_qmax_plot,
+            xy_qmax_plot,
+            crit_qmax_plot,
             invertx,
             tide.fig_qmax,
+            include_difference=False,
         )
+
 
     time_ref = None
     if tide.time_list and tide.time_list[0] is not None:

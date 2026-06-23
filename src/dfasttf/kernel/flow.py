@@ -130,45 +130,6 @@ def tide_max_transverse_per_point(
 
     return idx_tvmax, tv_max, upar_at_tvmax
 
-
-# def orient_transverse_toward_bank(
-#     transverse_velocity: np.ndarray,
-#     profile_angles: np.ndarray,
-#     profile_points_xy: np.ndarray,   # shape (n, 2)
-#     axis_point_xy: np.ndarray,       # shape (2,)
-# ) -> np.ndarray:
-#     """
-#     Reorient transverse velocity so that:
-#       positive = toward bank
-#       negative = toward river axis
-
-#     Works for:
-#     - (n,) arrays
-#     - (nt, n) arrays
-#     """
-#     transverse_velocity = np.asarray(transverse_velocity)
-#     th = np.radians(profile_angles)
-
-#     # positive normal that matches flow.trans_velocity()
-#     nx = -np.sin(th)
-#     ny = np.cos(th)
-
-#     # vector from river axis to profile point
-#     rx = profile_points_xy[:, 0] - axis_point_xy[0]
-#     ry = profile_points_xy[:, 1] - axis_point_xy[1]
-
-#     dot = nx * rx + ny * ry
-#     sign_bank = np.sign(dot)
-#     sign_bank[sign_bank == 0] = 1.0
-
-#     if transverse_velocity.ndim == 1:
-#         return transverse_velocity * sign_bank
-#     if transverse_velocity.ndim == 2:
-#         return transverse_velocity * sign_bank[np.newaxis, :]
-
-#     raise ValueError("transverse_velocity must be 1D or 2D")
-
-
 def alongstream_velocity(
     u: np.ndarray, v: np.ndarray, angles_deg: np.ndarray
 ) -> np.ndarray:
@@ -265,3 +226,51 @@ def tide_peaks_from_upar(
     tv_flood = tv_tn[idx_flood, i]
 
     return idx_ebb, idx_flood, tv_ebb, tv_flood
+
+
+def orient_transverse_by_profile_side(
+    transverse_velocity: np.ndarray,
+    profile_is_right: bool,
+) -> np.ndarray:
+    """
+    Reorient transverse velocity based on whether the profile lies on the
+    right or left side of the river center line.
+
+    Convention
+    ----------
+    Positive values should represent flow toward the bank and negative values
+    flow toward the river center.
+
+    Assumption
+    ----------
+    The current transverse sign convention produced by `trans_velocity()` is
+    assumed to correspond to:
+    - right-side profiles  -> keep sign
+    - left-side profiles   -> flip sign
+
+    If validation shows the opposite convention is needed, simply swap the sign
+    assignment below.
+
+    Parameters
+    ----------
+    transverse_velocity : np.ndarray
+        Transverse velocity array, shape (n,) or (nt, n).
+    profile_is_right : bool
+        True if the profile lies on the right side of the center line.
+
+    Returns
+    -------
+    np.ndarray
+        Reoriented transverse velocity with the same shape as input.
+    """
+    sign = 1.0 if profile_is_right else -1.0
+
+    transverse_velocity = np.asarray(transverse_velocity)
+
+    if transverse_velocity.ndim == 1:
+        return transverse_velocity * sign
+
+    if transverse_velocity.ndim == 2:
+        return transverse_velocity * sign
+
+    raise ValueError("transverse_velocity must be 1D or 2D")

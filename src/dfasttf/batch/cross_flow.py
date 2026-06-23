@@ -25,6 +25,7 @@ def run(
     configuration: Config,
     figfile: Path,
     outputfiles: list[Path],
+    profile_is_right: bool,
     tide: tide_module.TideInputs | None = None,
 ) -> None:
     """
@@ -48,17 +49,13 @@ def run(
     transverse_velocity = []
 
     for x, y, wd in zip(ucx, ucy, water_depth):
+        
         trans_flow = flow.trans_velocity(x, y, profile_angles)
+        trans_flow = flow.orient_transverse_by_profile_side(
+            trans_flow,
+            profile_is_right,
+        )
 
-        # Reorient so that:
-        # positive = toward bank
-        # negative = toward river axis
-        # trans_flow = flow.orient_transverse_toward_bank(
-        #     trans_flow,
-        #     profile_angles,
-        #     profile_points_xy,
-        #     axis_point_xy,
-        # )
 
         repr_trans_flow = flow.repr_trans_velocity(
             wd, trans_flow, path_distances, configuration.ship_params.depth
@@ -130,6 +127,7 @@ def run(
         rkm=rkm,
         path_distances=path_distances,
         profile_angles=profile_angles,
+        profile_is_right=profile_is_right,
         configuration=configuration,
         outputfiles=outputfiles,
         td=TransverseDischarge(),

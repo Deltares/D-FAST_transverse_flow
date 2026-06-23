@@ -18,6 +18,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from shapely.geometry import LineString
 from xarray import DataArray
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 from dfastmi.batch.plotting import chainage_markers, savefig
 from dfasttf.config import Config
@@ -560,6 +561,7 @@ class CrossFlow:
         crit_values: list[np.ndarray],
         inverse_xaxis: bool,
         filename: Path,
+        include_difference: bool = True,
     ) -> None:
         plt.close("all")
         fig = initialize_figure()
@@ -576,7 +578,7 @@ class CrossFlow:
         fraction = self.config.FRACTION
         ax2 = None
         diff = None
-        if len(transverse_velocity) > 1:
+        if include_difference and len(transverse_velocity) > 1:
             ax2 = difference_plot(ax1, CrossFlowConfig.DIFF_YLABEL, Plot1DConfig.COLORS[-1])
             data = transverse_velocity[1] - transverse_velocity[0]
             ax2.set_ylim([y / fraction for y in ax1.get_ylim()])
@@ -628,11 +630,26 @@ class CrossFlow:
         plt.close("all")
         fig = initialize_figure(figwidth=1.35 * FIGWIDTH)
 
-        ax1 = initialize_subplot(fig, 2, 1, 1, self.config.XLABEL, self.config.YLABEL)
-        ax2 = initialize_subplot(fig, 2, 1, 2, self.config.XLABEL, self.config.YLABEL)
+        # extra row on top for legend
+        gs = fig.add_gridspec(
+            nrows=3,
+            ncols=1,
+            height_ratios=[1.3, 8, 8],
+        )
 
-        ax1.set_title("Dwarsstroomsnelheid bij piek eb (per locatie)")
-        ax2.set_title("Dwarsstroomsnelheid bij piek vloed (per locatie)")
+        lax = fig.add_subplot(gs[0, 0])   # legend axis
+        ax1 = fig.add_subplot(gs[1, 0])   # ebb
+        ax2 = fig.add_subplot(gs[2, 0])   # flood
+
+        lax.axis("off")
+
+        ax1.set_xlabel(self.config.XLABEL)
+        ax1.set_ylabel(self.config.YLABEL)
+        ax2.set_xlabel(self.config.XLABEL)
+        ax2.set_ylabel(self.config.YLABEL)
+
+        ax1.set_title("Representatieve dwarsstroomsnelheid bij piek eb (per cel)")
+        ax2.set_title("Representatieve dwarsstroomsnelheid bij piek vloed (per cel)")
 
         ax1.set_ylim(self.config.YLIM)
         ax2.set_ylim(self.config.YLIM)
@@ -661,14 +678,35 @@ class CrossFlow:
         n_present = sum(v is not None for v in transverse_velocity_ebb)
         labels = Plot1DConfig.LABELS[0:n_present]
         handles = ebb_lines[:n_present]
-        ax1.legend(
+
+
+        legend = lax.legend(
             handles,
             labels,
-            bbox_to_anchor=(0.0, 1.02, 1.0, 0.102),
-            loc="lower left",
-            ncols=2,
-            borderaxespad=0.0,
+            loc="center",
+            ncols=min(3, n_present),
+            frameon=True,
+            facecolor="white",
+            framealpha=1.0,
         )
+        
+        legend.get_frame().set_linewidth(1)
+
+
+        if annotation:
+            fig.text(
+                0.01,
+                0.01,
+                annotation,
+                ha="left",
+                va="bottom",
+                fontsize=9,
+                color="dimgray",
+            )
+
+        fig.set_figheight(1.0 * FIGWIDTH)
+        savefig(fig, filename)
+
 
         if annotation:
             fig.text(
@@ -682,6 +720,7 @@ class CrossFlow:
             )
 
         fig.set_figheight(0.9 * FIGWIDTH)
+        fig.subplots_adjust(top=0.7)
         savefig(fig, filename)
 
     def create_figure_alongstream_timeseries(
@@ -830,30 +869,35 @@ class CrossFlow:
     ) -> None:
         """
         Figure with:
-        1) maximum transverse velocity over the full tide cycle vs rkm
+        1) maximum representative transverse velocity over the full tide cycle vs rkm
         2) alongstream velocity through time with points at idx_tvmax
         3) x-t heatmap of |tv_tn| with the same points overlaid
         """
         plt.close("all")
         fig = initialize_figure(figwidth=1.35 * FIGWIDTH)
 
-        gs = fig.add_gridspec(
-            nrows=4,
+        # left column = plots
+        # right column = legends / colorbars
+        outer = fig.add_gridspec(
+            nrows=3,
             ncols=2,
-            width_ratios=[20, 1.4],
-            height_ratios=[7, 10, 8, 2],
+            width_ratios=[20, 4.5],
+            height_ratios=[9, 10, 8],
         )
 
-        ax1 = fig.add_subplot(gs[0, 0])
-        ax2 = fig.add_subplot(gs[1, 0])
-        ax3 = fig.add_subplot(gs[2, 0])
+        ax1 = fig.add_subplot(outer[0, 0])
+        ax2 = fig.add_subplot(outer[1, 0])
+        ax3 = fig.add_subplot(outer[2, 0])
 
-        cax1 = fig.add_subplot(gs[1, 1])  # colorbar subplot 2
-        cax2 = fig.add_subplot(gs[2, 1])  # colorbar subplot 3
-        lax = fig.add_subplot(gs[3, 1])
+        # right column
+        lax1 = fig.add_subplot(outer[0, 1])   # legend only for subplot 1
+        cax1 = fig.add_subplot(outer[1, 1])   # full-height axis for legend+colorbar subplot 2
+        cax2 = fig.add_subplot(outer[2, 1])   # full-height axis for legend+colorbar subplot 3
+
+        lax1.axis("off")
 
         # ------------------------------------------------------------
-        # Subplot 1: max transverse velocity vs rkm
+        # Subplot 1: max representative transverse velocity vs rkm
         # ------------------------------------------------------------
         lines1 = []
         for i, y in enumerate(tv_max_list):
@@ -862,13 +906,31 @@ class CrossFlow:
             (line,) = plot_variable(ax1, rkm, y, Plot1DConfig.COLORS[i])
             lines1.append(line)
 
-        ax1.set_title("Maximale dwarsstroomsnelheid over getijcyclus")
-        ax1.set_ylabel("dwarsstroomsnelheid [m/s]")
+        ax1.set_title("Maximale representatieve dwars-\nstroomsnelheid over getijcyclus (per cel)")
+        ax1.set_xlabel("raai km")
+        ax1.set_ylabel("representatieve dwars-\nstroomsnelheid [m/s]")
         style_1d_axis(ax1, inverse_xaxis)
 
+        # make sure x ticks are shown
+        ax1.xaxis.set_major_locator(ticker.MultipleLocator(XMAJORTICK))
+        ax1.xaxis.set_minor_locator(ticker.MultipleLocator(XMINORTICK))
+        ax1.tick_params(axis="x", which="both", labelbottom=True)
+
         n_present = sum(y is not None for y in tv_max_list)
-        labels = Plot1DConfig.LABELS[0:n_present]
-        handles = lines1[:n_present]
+        labels1 = Plot1DConfig.LABELS[0:n_present]
+        handles1 = lines1[:n_present]
+
+        lax1.legend(
+            handles1,
+            labels1,
+            loc="center left",
+            frameon=False,
+            fontsize=8,
+            handlelength=1.2,
+            handletextpad=0.4,
+            labelspacing=0.4,
+            borderaxespad=0.0,
+        )
 
         # ------------------------------------------------------------
         # Subplot 2: alongstream velocity through time + idx_tvmax points
@@ -878,14 +940,15 @@ class CrossFlow:
         else:
             x = np.asarray(time)
 
-        rk_km, norm, cmap = make_rkm_colormap(rkm)
+        # color scale for subplot 2: raai km
+        rk_km, norm_rkm, cmap_rkm = make_rkm_colormap(rkm)
 
         nt, n = upar_tn.shape
         for i in range(n):
             ax2.plot(
                 x,
                 upar_tn[:, i],
-                color=cmap(norm(rk_km[i])),
+                color=cmap_rkm(norm_rkm(rk_km[i])),
                 lw=0.4,
                 alpha=0.35,
             )
@@ -905,8 +968,8 @@ class CrossFlow:
             upar_tn,
             idx_tvmax,
             rk_km,
-            norm,
-            cmap,
+            norm_rkm,
+            cmap_rkm,
             marker="s",
             edgecolor="magenta",
             zorder=8,
@@ -915,17 +978,49 @@ class CrossFlow:
         )
 
         format_datetime_xaxis(fig, ax2, x)
+        ax2.tick_params(axis="x", which="both", labelbottom=True)
 
         ax2.set_title("Moment van maximale dwarsstroomsnelheid")
         ax2.set_xlabel("tijd")
-        ax2.set_ylabel("langsstroomsnelheid [m/s]")
+        ax2.set_ylabel("langsstroomsnelheid\n[m/s]")
         ax2.grid(True, which="major", linestyle="-", alpha=0.6)
         ax2.grid(True, which="minor", linestyle="--", color="lightgrey", alpha=0.6)
 
-        sm_rkm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+        # legend inset at top of colorbar column for subplot 2
+        legax2 = inset_axes(
+            cax1,
+            width="100%",
+            height="20%",
+            loc="upper left",
+            borderpad=0,
+        )
+        legax2.axis("off")
+        legax2.legend(
+            [mean_line],
+            ["gemiddelde"],
+            loc="upper left",
+            frameon=False,
+            fontsize=8,
+            handlelength=1.2,
+            handletextpad=0.4,
+            labelspacing=0.4,
+            borderaxespad=0.0,
+        )
+
+        # colorbar for subplot 2: raai km, full height of subplot row
+        sm_rkm = plt.cm.ScalarMappable(norm=norm_rkm, cmap=cmap_rkm)
         sm_rkm.set_array([])
         cbar1 = fig.colorbar(sm_rkm, cax=cax1, orientation="vertical")
-        cbar1.set_label("rkm [km]")
+        cbar1.set_label("raai km")
+
+        # ticks on every whole km
+        raai_ticks = np.arange(
+            np.floor(np.nanmin(rk_km)),
+            np.ceil(np.nanmax(rk_km)) + 1,
+            1.0,
+        )
+        cbar1.set_ticks(raai_ticks)
+        cbar1.set_ticklabels([f"{tick:.0f}" for tick in raai_ticks])
 
         # ------------------------------------------------------------
         # Subplot 3: x-t heatmap of |tv_tn| + idx_tvmax points
@@ -937,12 +1032,15 @@ class CrossFlow:
 
         x_rkm = np.asarray(rkm, dtype=float)
 
+        # different colormap from subplot 2
+        cmap_tv = "magma"
+
         pcm = ax3.pcolormesh(
             x_rkm,
             y_time,
             np.abs(tv_tn),
             shading="auto",
-            cmap="viridis",
+            cmap=cmap_tv,
         )
 
         idx_tvmax = np.asarray(idx_tvmax, dtype=int)
@@ -962,18 +1060,14 @@ class CrossFlow:
                 zorder=8,
             )
 
-        ax3.set_title("Absolute dwarsstroomsnelheid in tijd")
-        ax3.set_xlabel("rivierkilometer")
+        ax3.set_title("Absolute dwarsstroomsnelheid over tijd (per cel)")
+        ax3.set_xlabel("raai km")
         ax3.set_ylabel("tijd")
         style_1d_axis(ax3, inverse_xaxis)
         format_datetime_yaxis(ax3, y_time)
+        ax3.tick_params(axis="x", which="both", labelbottom=True)
 
-        cbar2 = fig.colorbar(pcm, cax=cax2, orientation="vertical")
-        cbar2.set_label("|dwarsstroomsnelheid| [m/s]")
-
-        # ------------------------------------------------------------
-        # Shared legend
-        # ------------------------------------------------------------
+        # legend inset at top of colorbar column for subplot 3
         proxy_max_tv = make_marker_proxy(
             marker="s",
             edgecolor="magenta",
@@ -982,10 +1076,29 @@ class CrossFlow:
             markeredgewidth=0.5,
         )
 
-        legend_handles = [*handles, mean_line, proxy_max_tv]
-        legend_labels = [*labels, "gemiddelde", "moment max dwarsstroming"]
+        legax3 = inset_axes(
+            cax2,
+            width="100%",
+            height="20%",
+            loc="upper left",
+            borderpad=0,
+        )
+        legax3.axis("off")
+        legax3.legend(
+            [proxy_max_tv],
+            ["moment max. dwarsstroming"],
+            loc="upper left",
+            frameon=False,
+            fontsize=8,
+            handlelength=1.2,
+            handletextpad=0.4,
+            labelspacing=0.4,
+            borderaxespad=0.0,
+        )
 
-        add_side_legend(lax, legend_handles, legend_labels)
+        # colorbar for subplot 3: |tv|
+        cbar2 = fig.colorbar(pcm, cax=cax2, orientation="vertical")
+        cbar2.set_label("|dwarsstroomsnelheid| [m/s]")
 
-        fig.set_figheight(1.0 * FIGWIDTH)
+        fig.set_figheight(1.20 * FIGWIDTH)
         savefig(fig, filename)
