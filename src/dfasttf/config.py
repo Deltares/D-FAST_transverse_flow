@@ -67,6 +67,7 @@ def get_output_files(
     configdir: Path,
     section: str,
 ) -> list[str]:
+    """Returns the output files as absolute paths (list of shape (2,))"""
     output_files = []
 
     ref = config.get(section, "Reference", fallback="")

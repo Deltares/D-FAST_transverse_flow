@@ -4,11 +4,12 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import xugrid as xu
+import warnings
 from xarray import DataArray
 from xugrid import UgridDataArray
 
 from dfasttf.batch import geometry, plotting, support
-from dfasttf.batch.dflowfm import clip_simulation_data
+from dfasttf.batch.dflowfm import clip_simulation_data, regrid_data_array
 from dfasttf.config import Config
 from dfasttf.kernel import froude
 
@@ -105,18 +106,38 @@ def run_2d(
         plotting.Ice2D().create_map(fr, riverkm, profile_line, filenames[idx])
 
     if len(froude_number) > 1:
+        #grids_match = _map_grids(froude_number)
+        # if not grids_match:
+        #     warnings.warn(f"The intervention and reference grids don't match: {filenames}.\n"
+        #                   "Note that the intervention grid is regridded to match the reference grid in the difference maps.", 
+        #                   RuntimeWarning)
+        froude_number[1] = regrid_data_array(froude_number)
         plotting.Ice2D().create_diff_map(
             froude_number[0], froude_number[1], riverkm, profile_line, filenames[2]
         )
 
+def _map_grids(arrays: list[UgridDataArray]) -> bool | None:
+    """Check if the grids are equal.
+    0: mismatch, 1: match."""
+    if len(arrays) < 2:
+        return
+    
+    # TODO: replace this by face-node connectivity:
+    nfaces1 = int(arrays[0].sizes.get("mesh2d_nFaces", 0))
+    nfaces2 = int(arrays[1].sizes.get("mesh2d_nFaces", 0))
+    return nfaces1 == nfaces2
 
 def correct_model_results(
-    froude_number: DataArray, water_depth: DataArray, configuration: Config
+    froude_number: DataArray,
+    water_depth: DataArray, 
+    configuration: Config
 ) -> DataArray:
     water_uplift = configuration.general.bool_flags["waterupliftcorrection"]
     bed_change = configuration.general.bool_flags["bedchangecorrection"]
+    tide_flag = configuration.general.bool_flags["tide"]
     bed_change_file = configuration.general.bedchangefile
     bbox = configuration.general.bbox
+
     if bed_change:
         if bed_change_file is None:
             raise ValueError("No bed change file specified in configuration.")
@@ -124,9 +145,42 @@ def correct_model_results(
         froude_number = froude.bed_change(froude_number, bedlevel_change, water_depth)
     if water_uplift:
         froude_number = froude.water_uplift(froude_number)
+    if tide_flag and "time" in froude_number.dims:
+        froude_number = get_percentile(froude_number, percentile=50)
     return froude_number
 
+def get_percentile(
+    da: DataArray,
+    percentile: int = 80
+) -> DataArray:
+    """Takes the specified percentile of values over time.
 
+    Parameters
+    ----------
+    da : DataArray
+        Values over time, dimension 'time' must be present
+    percentile : int
+        Desired percentile (0-100), default is 80
+
+    Returns
+    ----------
+    UgridDataArray
+        k-th percentile for each cell
+    """
+    if not (0 <= percentile <= 100):
+        raise ValueError("percentile must be between 0 and 100")
+
+    # Convert to fraction for xarray quantile
+    q = percentile / 100.0
+
+    # Assume time dimension is named "time"
+    if "time" not in da.dims:
+        raise ValueError("Input variable must have a 'time' dimension")
+
+    result = da.quantile(q=q, dim="time", keep_attrs=True)
+
+    return result
+                    
 def get_bedlevel_change(file: Path, bbox: list) -> UgridDataArray:
     ds = xu.open_dataset(file)
     dfast_name = "avgdzb"

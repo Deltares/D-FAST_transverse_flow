@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import matplotlib.pyplot as plt
+import matplotlib.figure
 import numpy as np
 import shapely.plotting
 import xarray as xr
@@ -18,9 +19,10 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from shapely.geometry import LineString
 from xarray import DataArray
+from xugrid import UgridDataArray
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
-from dfastmi.batch.plotting import chainage_markers, savefig
+from dfastmi.batch.plotting import chainage_markers
 from dfasttf.config import Config
 
 FIGWIDTH: float = 5.748  # Deltares report width
@@ -204,6 +206,20 @@ def scatter_idx_points_on_timeseries(
         zorder=zorder,
     )
 
+def savefig(fig: matplotlib.figure.Figure, filename: str) -> None:
+    """
+    Save a single figure to file.
+
+    Arguments
+    ---------
+    fig : matplotlib.figure.Figure
+        Figure to a be saved.
+    filename : str
+        Name of the file to be written.
+    """
+    print("saving figure {file}".format(file=filename))
+    plt.show(block=False)
+    fig.savefig(filename, dpi=300, bbox_inches='tight', pad_inches='layout')
 
 # ============================================================
 # Plot configs
@@ -226,9 +242,9 @@ class Plot1DConfig:
 class FlowfieldConfig:
     VELOCITY_YLABEL: str = "stroomsnelheid\nmagnitude [m/s]"
     VELOCITY_DIFF_YLABEL: str = "verschil plansituatie\n-referentie [m/s]"
-    VELOCITY_YLIM: tuple = (0.0, 2.0)
-    VELOCITY_YTICKS_MAJOR: float = 0.4
-    VELOCITY_YTICKS_MINOR: float = 0.1
+    VELOCITY_YLIM: tuple = (0.0, 0.5)
+    VELOCITY_YTICKS_MAJOR: float = 0.1
+    VELOCITY_YTICKS_MINOR: float = 0.05
     ANGLE_YTICKS_MAJOR: float = 30.0
     ANGLE_YTICKS_MINOR: float = 10.0
     ANGLE_YLIM: tuple = (-90.0, 90.0)
@@ -239,8 +255,8 @@ class FlowfieldConfig:
 
 @dataclass
 class FroudeConfig:
-    legend_title = "Froude getal"
-    profile_line_color: str = "green"
+    profile_line_color: str = "black"
+    legend_title: str = "Verschil tussen plan-\nsituatie en referentie"
 
     class Abs:
         colorbar_label: str = "Froude getal"
@@ -249,10 +265,11 @@ class FroudeConfig:
 
     class Diff:
         bins: list = [0, 0.08, 0.1, 0.15, np.inf]
-        colors = ("blue", "red")
+        colors = ("green", "red", "blue")
         labels: list[str] = [
-            f"van < {bins[1]} naar >= {bins[1]}",
-            f"van > {bins[1]} naar <= {bins[1]}",
+            f"Fr van < {bins[1]} naar >= {bins[1]}",
+            f"Fr van > {bins[1]} naar <= {bins[1]}",
+            "droog in referentie,\nnat in plansituatie"
         ]
 
 
@@ -261,6 +278,8 @@ class CrossFlowConfig:
     XLABEL = Plot1DConfig.XLABEL
     YLABEL: str = "representatieve dwars-\nstroomsnelheid [m/s]"
     DIFF_YLABEL: str = FlowfieldConfig.VELOCITY_DIFF_YLABEL
+    EBB_TITLE: str = "Bij piek ebstroming (per cel)"
+    FLOOD_TITLE: str = "Bij piek vloedstroming (per cel)"
     CRIT_LABEL: str = "Lokaal criterium"
     YLIM: tuple = (-0.3, 0.3)
     FRACTION: int = 3
@@ -308,7 +327,7 @@ class Plot2D:
     ) -> tuple[Figure, Axes]:
         fig, ax = self.initialize_map()
         p = bedlevel.ugrid.plot.pcolormesh(
-            ax=ax, add_colorbar=False, cmap="terrain", center=False
+            ax=ax, add_colorbar=False, cmap="terrain", center=False, edgecolors='none'
         )
         fig.colorbar(
             p,
@@ -339,6 +358,7 @@ class Ice2D:
             levels=FroudeConfig.Abs.levels,
             cmap=FroudeConfig.Abs.colormap,
             extend="max",
+            edgecolors='none'
         )
         fig.colorbar(
             p,
@@ -360,8 +380,8 @@ class Ice2D:
 
     def create_diff_map(
         self,
-        ref_data: xr.DataArray,
-        variant_data: xr.DataArray,
+        ref_data: UgridDataArray,
+        variant_data: UgridDataArray,
         riverkm: LineString,
         profile_line: LineString | None,
         filename: Path,
@@ -373,27 +393,51 @@ class Ice2D:
 
         ref_data_digitized = self._digitize(ref_data.values, bins)
         variant_data_digitized = self._digitize(variant_data.values, bins)
+        dry_ref_mask = np.isnan(ref_data.values)
+        wet_variant_mask = ~np.isnan(variant_data.values)
 
-        classes = self._compute_change_classes(ref_data_digitized, variant_data_digitized)
+        classes = self._compute_change_classes(
+            ref_data_digitized,
+            variant_data_digitized,
+            dry_ref_mask,
+            wet_variant_mask,
+        )
         variant_data.values = classes
 
         fig, ax = Plot2D().initialize_map()
-        color = "lightgrey"
-        ref_masked = ref_data[ref_data_digitized == 0]
-        ref_masked.ugrid.plot(
+        p = ref_data.ugrid.plot(
             ax=ax,
-            cmap=ListedColormap([color]),
             add_colorbar=False,
-            vmin=bins[0],
-            vmax=bins[1],
+            levels=FroudeConfig.Abs.levels,
+            cmap=FroudeConfig.Abs.colormap,
+            extend="max",
+            alpha=0.5,
+            edgecolors='none'
         )
+        fig.colorbar(
+            p,
+            ax=ax,
+            label=FroudeConfig.Abs.colorbar_label + '\nin referentie',
+            orientation="horizontal",
+            shrink=0.25,
+        )
+        # color = "lightgrey"
+        # ref_masked = ref_data[ref_data_digitized == 0]
+        # ref_masked.ugrid.plot(
+        #     ax=ax,
+        #     cmap=ListedColormap([color]),
+        #     add_colorbar=False,
+        #     vmin=bins[0],
+        #     vmax=bins[1],
+        # )
 
         ax, legend_elements = self._plot_diff_map(ax, variant_data, labels, colors)
 
         ax = Plot2D().modify_axes(ax)
-        lgd = fig.legend(
-            [Patch(facecolor=color), *legend_elements],
-            [f"< {bins[1]} in referentie", *labels],
+        lgd = ax.legend(legend_elements,
+                        labels,
+                        loc='lower center',
+                        bbox_to_anchor=(0.5,1)
         )
         lgd.set_title(FroudeConfig.legend_title)
         ax.grid(True)
@@ -417,6 +461,7 @@ class Ice2D:
             add_colorbar=False,
             cmap=ListedColormap(colors),
             zorder=1,
+            edgecolors='none'
         )
 
         legend_elements = [
@@ -428,12 +473,13 @@ class Ice2D:
         return np.digitize(data, bins) - 1
 
     def _compute_change_classes(
-        self, ref_data: np.ndarray, variant_data: np.ndarray
+        self, ref_data: np.ndarray, variant_data: np.ndarray, dry_ref_mask: np.ndarray, wet_variant_mask: np.ndarray
     ) -> np.ndarray:
         classes = variant_data * np.nan
         conditions = [
             (ref_data < 1) & (variant_data >= 1),
             (ref_data > 0) & (variant_data <= 0),
+            dry_ref_mask & wet_variant_mask
         ]
         for i, cond in enumerate(conditions, start=1):
             classes[cond] = i
@@ -624,11 +670,10 @@ class CrossFlow:
         transverse_velocity_flood: list[np.ndarray | None],
         inverse_xaxis: bool,
         filename: Path,
-        threshold: float | None = None,
         annotation: str | None = None,
     ) -> None:
         plt.close("all")
-        fig = initialize_figure(figwidth=1.35 * FIGWIDTH)
+        fig = initialize_figure()
 
         # extra row on top for legend
         gs = fig.add_gridspec(
@@ -648,8 +693,8 @@ class CrossFlow:
         ax2.set_xlabel(self.config.XLABEL)
         ax2.set_ylabel(self.config.YLABEL)
 
-        ax1.set_title("Representatieve dwarsstroomsnelheid bij piek eb (per cel)")
-        ax2.set_title("Representatieve dwarsstroomsnelheid bij piek vloed (per cel)")
+        ax1.set_title(self.config.EBB_TITLE)
+        ax2.set_title(self.config.FLOOD_TITLE)
 
         ax1.set_ylim(self.config.YLIM)
         ax2.set_ylim(self.config.YLIM)
@@ -678,8 +723,6 @@ class CrossFlow:
         n_present = sum(v is not None for v in transverse_velocity_ebb)
         labels = Plot1DConfig.LABELS[0:n_present]
         handles = ebb_lines[:n_present]
-
-
         legend = lax.legend(
             handles,
             labels,
@@ -691,22 +734,6 @@ class CrossFlow:
         )
         
         legend.get_frame().set_linewidth(1)
-
-
-        if annotation:
-            fig.text(
-                0.01,
-                0.01,
-                annotation,
-                ha="left",
-                va="bottom",
-                fontsize=9,
-                color="dimgray",
-            )
-
-        fig.set_figheight(1.0 * FIGWIDTH)
-        savefig(fig, filename)
-
 
         if annotation:
             fig.text(
@@ -720,7 +747,7 @@ class CrossFlow:
             )
 
         fig.set_figheight(0.9 * FIGWIDTH)
-        fig.subplots_adjust(top=0.7)
+        #fig.subplots_adjust(top=0.7)
         savefig(fig, filename)
 
     def create_figure_alongstream_timeseries(

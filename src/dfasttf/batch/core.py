@@ -53,7 +53,7 @@ def run_analysis(
         "2D": lambda: run_2d_analysis(
             configuration,
             section,
-            simulation_data,
+            simulation_data_tide,
             variables,
             prof_line_df,
         ),
@@ -247,10 +247,10 @@ def save_1d_figures(
         and profile_data_tide is not None
         and len(profile_data_tide["ucx"]) > 0
     ):
-        base = f"{section}_profile{profile_index}_tide_transverse_velocity"
+        base = f"{section}_profile{profile_index}_transverse_flow_ebb_flood"
         figfile_tide_vel = construct_figure_filename(figdir, base, figext)
 
-        base = f"{section}_profile{profile_index}_tide_transverse_flow_maxQ"
+        base = f"{section}_profile{profile_index}_transverse_flow_maxQ"
         figfile_tide_q = construct_figure_filename(figdir, base, figext)
 
         base = f"{section}_profile{profile_index}_tide_alongstream_velocity_time"

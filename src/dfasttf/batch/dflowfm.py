@@ -1,4 +1,3 @@
-from collections import OrderedDict
 from pathlib import Path
 from typing import NamedTuple
 
@@ -14,6 +13,7 @@ from dfastbe.io.data_models import LineGeometry
 from dfasttf.batch.filetype import detect_file_info, FileKind
 from dfasttf.batch import geometry
 from dfasttf.config import Config, get_output_files
+from dfasttf.batch.operations import sort_a_by_b, group_duplicates
 
 VARN_FACE_X_BND = "mesh2d_face_x_bnd"
 VARN_FACE_Y_BND = "mesh2d_face_y_bnd"
@@ -32,8 +32,6 @@ class Variables(NamedTuple):
     ucx: str
     ucy: str
     bl: str
-
-
 
 def _select_time_window(ds, start: str | None, stop: str | None):
     """
@@ -70,6 +68,7 @@ def _select_time_window(ds, start: str | None, stop: str | None):
             "Both TideStart and TideStop must be provided when defining a tide analysis window."
         )
 
+    print(f"Original ds: {ds['time'].values}")
     try:
         t_start = np.datetime64(start.replace(" ", "T"))
         t_stop = np.datetime64(stop.replace(" ", "T"))
@@ -82,7 +81,7 @@ def _select_time_window(ds, start: str | None, stop: str | None):
         raise RuntimeError("TideStop must be later than TideStart.")
 
     ds_sel = ds.sel(time=slice(t_start, t_stop))
-
+    print(f"Subset of ds: {ds_sel['time'].values}")
     if "time" not in ds_sel.coords or ds_sel["time"].size < 2:
         raise RuntimeError(
             "Selected tide window does not contain enough timesteps."
@@ -125,6 +124,7 @@ def check_time_coverage(
         )
 
     t = ds["time"].values
+    print(np.datetime64(t[-1]), np.datetime64(t[0]))
     duration = np.datetime64(t[-1]) - np.datetime64(t[0])
 
     min_duration = np.timedelta64(24 * 60 + 50, "m")  # 24h50m
@@ -279,6 +279,29 @@ def check_ship_length_vs_grid_resolution(
             RuntimeWarning,
         )
 
+def regrid_data_array(arrays: list[UgridDataArray]) -> UgridDataArray:
+    """Check whether the grids on two datasets match and return a regridded source dataset.
+    The 2nd dataset is regridded to match the 1st dataset.
+    TODO: eventually replace with _map_grids from dflowfm.batch.AnalyserDflowfm() 
+    
+    Parameters
+    ----------
+    datasets: list of UgridDatasets (shape (2,))
+
+    Returns
+    -------
+    UgridDataset: regridded dataset (2nd dataset in datasets)
+
+    """
+    if len(arrays)<2:
+        raise ValueError("List contains only one UgridDataArray, but regridding requires two UgridDataArrays")
+
+    da1 = arrays[0]
+    da2 = arrays[1]
+    regridder = xu.OverlapRegridder(source=da2, target=da1)
+    da2_regridded = regridder.regrid(da2)
+    return da2_regridded
+
 
 def load_simulation_data(configuration: Config, section: str):
     """
@@ -356,9 +379,9 @@ def load_simulation_data(configuration: Config, section: str):
                 f"Available vars (sample): {info.vars_sample}"
             )
 
-        # MAP-specific tide checks
-        if tide_flag and info.kind == FileKind.MAP:
-            check_time_coverage(ds, section, file, selected_window=False)
+        # # MAP-specific tide checks
+        # if tide_flag and info.kind == FileKind.MAP:
+        #     check_time_coverage(ds, section, file, selected_window=False)
 
         # --- SNAPSHOT dataset ---
         if info.kind == FileKind.MAP:
@@ -373,19 +396,21 @@ def load_simulation_data(configuration: Config, section: str):
         if tide_flag:
             if info.kind == FileKind.MAP:
                 ds_tide = _select_time_window(ds, tide_start, tide_stop)
+                print(ds_tide)
 
                 # selected-window checks
                 check_time_coverage(ds_tide, section, file, selected_window=True)
                 check_time_interval(ds_tide, section, file)
-
+                
                 tide_datasets.append(extract_variables(ds_tide))
+
+
             else:
                 warnings.warn(
                     f"[{section}] Tide=True but file has no time dimension (FOU). Tide analysis skipped.\n"
                     f"File: {file}",
                     RuntimeWarning,
                 )
-
 
     simulation_data_tide = tide_datasets if tide_datasets else None
     return snapshot_datasets, simulation_data_tide
@@ -738,37 +763,6 @@ def _order_intersection_points(
     return rkm_ordered, intersects_ordered, segment_idx_ordered, face_idx_ordered
 
 
-def sort_a_by_b(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Sorts the array `a` by the argsort of `b`.
-
-    Parameters:
-    a (np.ndarray): Array to be sorted.
-    b (np.ndarray): Array to sort by.
-
-    Returns:
-    np.ndarray: Sorted array `a`.
-    """
-    sort_idx = np.argsort(b)
-    return (
-        np.take_along_axis(a, sort_idx[:, np.newaxis], axis=0)
-        if a.ndim > 1
-        else a[sort_idx]
-    )
-
-
-def group_duplicates(array: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Groups duplicates in an array, preserving insertion order of first occurrences"""
-    groups = OrderedDict()
-    for idx, val in enumerate(array):
-        if val not in groups:
-            groups[val] = []
-        groups[val].append(idx)
-
-    group_indices = np.array([idx for indices in groups.values() for idx in indices])
-    grouped_array = array[group_indices]
-    return grouped_array, group_indices
-
-
 def convert_to_rkm(intersects, river_km, conversion_factor=1):
     """Converts an array of points to the corresponding rkm values
 
@@ -778,3 +772,4 @@ def convert_to_rkm(intersects, river_km, conversion_factor=1):
     intersects_line = LineGeometry(intersects)
     rkm = intersects_line.intersect_with_line(river_km) * conversion_factor
     return rkm
+
