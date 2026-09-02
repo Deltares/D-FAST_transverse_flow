@@ -1,6 +1,14 @@
 import sys
 import argparse
 from pathlib import Path
+
+import matplotlib
+
+# Force a non-interactive backend before any submodule imports matplotlib.pyplot,
+# since this is a batch/report-generation tool with no GUI. Without this, the
+# default backend on some systems can attempt to open a window per saved figure.
+matplotlib.use("Agg")
+
 from dfasttf.cmd import run
 from dfasttf import __version__
 from dfasttf import __path__

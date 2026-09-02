@@ -1,11 +1,18 @@
 from pathlib import Path
-
 import numpy as np
 import pandas as pd
-
 from dfasttf.batch import operations, plotting, support
 from dfasttf.config import Config
 from dfasttf.kernel import flow
+from dfasttf.batch import tide as tide_module
+
+def prepare_data_for_excel(xy_block, discharge, crit_value):
+    CONVERT_M_TO_KM = 1000
+    x_start = [xy[0][0] / CONVERT_M_TO_KM for xy in xy_block]
+    x_end = [xy[0][-1] / CONVERT_M_TO_KM for xy in xy_block]
+    y_max = [max(abs(xy[1])) for xy in xy_block]
+    exceedance = y_max > abs(crit_value)
+    return (x_start, x_end, discharge, y_max, crit_value, exceedance)
 
 
 def run(
@@ -17,24 +24,21 @@ def run(
     rkm: np.ndarray,
     configuration: Config,
     figfile: Path,
-    outputfiles: Path,
+    outputfiles: list[Path],
+    bankward_sign: np.ndarray,
+    tide: tide_module.TideInputs | None = None,
 ) -> None:
     """
-    Input:
-    ucx: (n,)
-        x-component of flow velocity
-    ucy: (n,)
-        y-component of flow velocity
-    water_depth: (n,)
-        water depth at intersection points
-    path_distances: (n,)
-        cumulative distance between intersection points
-    profile_angles: (n,)
-        angle of profile line segments
-    rkm: (n,)
-        projected riverkm values
+    Single public entry point:
+      - Always executes snapshot cross-flow analysis.
+      - If Tide=True:
+          * MAP/time tide inputs present -> runs tide analysis
+          * otherwise -> warning + skip tide
     """
 
+    # ============================================================
+    # Cross-flow analysis via Fourier or Map file
+    # ============================================================
     SHEET_LABELS = ("Reference", "WithIntervention", "Difference")
     CRITERIA: tuple[float, float] = (0.15, 0.3)  # criteria for transverse velocity
 
@@ -43,16 +47,26 @@ def run(
     # Transverse velocity:
     COLUMN_LABELS = ("raai (rkm)", "dwarsstroomsnelheid (m/s)")
     transverse_velocity = []
+
     for x, y, wd in zip(ucx, ucy, water_depth):
+        
         trans_flow = flow.trans_velocity(x, y, profile_angles)
-        repr_trans_flow = flow.repr_trans_velocity(wd, trans_flow, path_distances, configuration.ship_params.depth)
+        trans_flow = flow.orient_transverse_by_bankward_sign(
+            trans_flow,
+            bankward_sign,
+        )
+
+
+        repr_trans_flow = flow.repr_trans_velocity(
+            wd, trans_flow, path_distances, configuration.ship_params.depth
+        )
         transverse_velocity.append(repr_trans_flow)
 
     data = [
         transverse_velocity[0],
         transverse_velocity[1] if len(transverse_velocity) > 1 else None,
         (
-            transverse_velocity[1] - transverse_velocity[0]
+            (transverse_velocity[1] - transverse_velocity[0])
             if len(transverse_velocity) > 1
             else None
         ),
@@ -68,10 +82,11 @@ def run(
         "start (rkm)",
         "eind (rkm)",
         "dwarsstroomdebiet (m3/s)",
-        "max. dwarsstroomsnelheid magnitude (m3/s)",
+        "max. dwarsstroomsnelheid magnitude (m/s)",
         "criterium (m/s)",
         "overschrijding (0=FALSE,1=TRUE)",
     )
+
     discharges, crit_values, xy_blocks = TransverseDischarge().compute(
         rkm,
         path_distances,
@@ -100,14 +115,26 @@ def run(
         figfile,
     )
 
+    # ============================================================
+    # TIDE (optional)
+    # ============================================================
+    
+    if not configuration.general.bool_flags.get("tide", False):
+        return
 
-def prepare_data_for_excel(xy_block, discharge, crit_value):
-    CONVERT_M_TO_KM = 1000
-    x_start = [xy[0][0] / CONVERT_M_TO_KM for xy in xy_block]
-    x_end = [xy[0][-1] / CONVERT_M_TO_KM for xy in xy_block]
-    y_max = [max(abs(xy[1])) for xy in xy_block]
-    exceedance = y_max > abs(crit_value)
-    return (x_start, x_end, discharge, y_max, crit_value, exceedance)
+    tide_module.append_tide_results(
+        tide=tide,
+        rkm=rkm,
+        path_distances=path_distances,
+        profile_angles=profile_angles,
+        bankward_sign=bankward_sign,
+        configuration=configuration,
+        outputfiles=outputfiles,
+        td=TransverseDischarge(),
+        prepare_data_for_excel=prepare_data_for_excel,
+        plotter=plotter,
+    )
+    
 
 
 class TransverseDischarge:
