@@ -14,20 +14,7 @@ from dfasttf.batch.dflowfm import (
 from dfasttf.batch.plotting import Plot2D, construct_figure_filename
 from dfasttf.batch import tide as tide_module
 from dfasttf.config import Config
-from dfasttf.kernel.geometry import on_right_side
-
-
-
-def profile_is_right_of_centerline(
-    profile_line: LineString,
-    riverkm: LineString,
-) -> bool:
-    """
-    Determine whether a profile line lies on the right side of the river center line.
-    """
-    line_xy = np.asarray(profile_line.coords)[:, :2]
-    ref_xy = np.asarray(riverkm.coords)[:, :2]
-    return on_right_side(line_xy, ref_xy)
+from dfasttf.kernel.geometry import bankward_normal_sign
 
 
 def run_analysis(
@@ -89,8 +76,6 @@ def run_1d_analysis(
         profile_coords = np.array(profile_line.coords)
         profile_index = str(prof_line_df.iloc[geom_idx].name)
         profile_data = {var: [] for var in variables._fields}
-
-        profile_is_right = profile_is_right_of_centerline(profile_line, riverkm)
         
         profile_data_tide = None
         if tide and simulation_data_tide is not None:
@@ -118,9 +103,14 @@ def run_1d_analysis(
 
             has_slice = True
 
-            rkm, path_distances, isegment, iface = sliced_ugrid
+            rkm, path_distances, isegment, iface, sample_points_xy = sliced_ugrid
             angles = np.array(prof_line_df["angle"].iloc[geom_idx][isegment])
 
+            bankward_sign = bankward_normal_sign(
+                angles,
+                sample_points_xy,
+                riverkm_coords,
+            )
             
             edge_coords = dflowfm.extract_edge_coords(
                 data,
@@ -186,7 +176,7 @@ def run_1d_analysis(
             angles,
             rkm,
             path_distances,
-            profile_is_right,
+            bankward_sign,
         )
 
         bedlevel = data[variables.bl].where(lambda x: x != 999)
@@ -207,7 +197,7 @@ def save_1d_figures(
     angles: np.ndarray,
     rkm: np.ndarray,
     path_distances: np.ndarray,
-    profile_is_right: bool,
+    bankward_sign: np.ndarray,
 ):
     """Generate and save 1D figures and CSV files."""
     figdir = configuration.plotsettings.options.figure_save_directory
@@ -259,6 +249,12 @@ def save_1d_figures(
         base = f"{section}_profile{profile_index}_tide_max_transverse"
         figfile_tide_max_tv = construct_figure_filename(figdir, base, figext)
 
+        base = f"{section}_profile{profile_index}_tide_directional_maxima_bankward"
+        figfile_tide_directional_bankward = construct_figure_filename(figdir, base, figext)
+
+        base = f"{section}_profile{profile_index}_tide_directional_maxima_riverward"
+        figfile_tide_directional_riverward = construct_figure_filename(figdir, base, figext)
+
         tide_inputs = tide_module.TideInputs(
             ucx=profile_data_tide["ucx"],
             ucy=profile_data_tide["ucy"],
@@ -268,6 +264,8 @@ def save_1d_figures(
             fig_qmax=figfile_tide_q,
             fig_upar=figfile_tide_upar,
             fig_max_tv=figfile_tide_max_tv,
+            fig_directional_bankward=figfile_tide_directional_bankward,
+            fig_directional_riverward=figfile_tide_directional_riverward,
         )
 
     # ---- Single call: snapshot always, tide optional inside run() ----
@@ -281,7 +279,7 @@ def save_1d_figures(
         configuration,
         figfile_cross,
         outputfiles,
-        profile_is_right,
+        bankward_sign,
         tide=tide_inputs,
     )
 

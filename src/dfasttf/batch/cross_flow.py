@@ -25,7 +25,7 @@ def run(
     configuration: Config,
     figfile: Path,
     outputfiles: list[Path],
-    profile_is_right: bool,
+    bankward_sign: np.ndarray,
     tide: tide_module.TideInputs | None = None,
 ) -> None:
     """
@@ -51,9 +51,9 @@ def run(
     for x, y, wd in zip(ucx, ucy, water_depth):
         
         trans_flow = flow.trans_velocity(x, y, profile_angles)
-        trans_flow = flow.orient_transverse_by_profile_side(
+        trans_flow = flow.orient_transverse_by_bankward_sign(
             trans_flow,
-            profile_is_right,
+            bankward_sign,
         )
 
 
@@ -127,7 +127,7 @@ def run(
         rkm=rkm,
         path_distances=path_distances,
         profile_angles=profile_angles,
-        profile_is_right=profile_is_right,
+        bankward_sign=bankward_sign,
         configuration=configuration,
         outputfiles=outputfiles,
         td=TransverseDischarge(),

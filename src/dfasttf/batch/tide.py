@@ -14,17 +14,21 @@ from dfasttf.kernel import flow
 
 @dataclass(frozen=True)
 class TideInputs:
-    ucx: list[np.ndarray]                 # each (nt, n)
-    ucy: list[np.ndarray]                 # each (nt, n)
-    h: list[np.ndarray]                   # each (nt, n)
-    time_list: list[np.ndarray | None]    # per case (nt,)
+    ucx: list[np.ndarray]  # each (nt, n)
+    ucy: list[np.ndarray]  # each (nt, n)
+    h: list[np.ndarray]  # each (nt, n)
+    time_list: list[np.ndarray | None]  # per case (nt,)
     fig_vel: Path
     fig_qmax: Path
     fig_upar: Path
     fig_max_tv: Path
+    fig_directional_bankward: Path
+    fig_directional_riverward: Path
 
 
-def _validate_tide_inputs(tide: TideInputs) -> tuple[list[np.ndarray], list[np.ndarray], list[np.ndarray], int, int, int]:
+def _validate_tide_inputs(
+    tide: TideInputs,
+) -> tuple[list[np.ndarray], list[np.ndarray], list[np.ndarray], int, int, int]:
     """
     Validate tide input arrays and return normalized arrays.
 
@@ -45,7 +49,10 @@ def _validate_tide_inputs(tide: TideInputs) -> tuple[list[np.ndarray], list[np.n
             raise ValueError(
                 f"Tide inputs require (nt, n) arrays. Case {k}: ucx shape={tide_ucx[k].shape}"
             )
-        if tide_ucy[k].shape != tide_ucx[k].shape or tide_h[k].shape != tide_ucx[k].shape:
+        if (
+            tide_ucy[k].shape != tide_ucx[k].shape
+            or tide_h[k].shape != tide_ucx[k].shape
+        ):
             raise ValueError(
                 f"Tide inputs shape mismatch. Case {k}: "
                 f"ucx={tide_ucx[k].shape}, ucy={tide_ucy[k].shape}, h={tide_h[k].shape}"
@@ -88,7 +95,9 @@ def _maxQ_for_tv_tn(
         if q_t > qmax:
             qmax = q_t
             t_best = t
-            payload_best = prepare_data_for_excel(xy_blocks[0], discharges[0], crit_values[0])
+            payload_best = prepare_data_for_excel(
+                xy_blocks[0], discharges[0], crit_values[0]
+            )
             xy_best = xy_blocks
             crit_best = crit_values
 
@@ -103,7 +112,7 @@ def append_tide_results(
     rkm: np.ndarray,
     path_distances: np.ndarray,
     profile_angles: np.ndarray,
-    profile_is_right: bool,
+    bankward_sign: np.ndarray,
     configuration: Config,
     outputfiles: list[Path],
     td,
@@ -142,6 +151,14 @@ def append_tide_results(
     tv_ebb_list = []
     tv_flood_list = []
 
+    idx_bankward_list = []
+    tv_bankward_max_list = []
+    q_bankward_list = []
+
+    idx_riverward_list = []
+    tv_riverward_max_list = []
+    q_riverward_list = []
+
     for k in range(n_cases):
         upar_tn, tv_tn = flow.tide_time_series(
             tide_ucx[k],
@@ -152,12 +169,46 @@ def append_tide_results(
             ship_depth,
         )
 
-        
-        tv_tn = flow.orient_transverse_by_profile_side(
+        tv_tn = flow.orient_transverse_by_bankward_sign(
             tv_tn,
-            profile_is_right,
+            bankward_sign,
         )
 
+        (
+            idx_bankward,
+            tv_bankward_max,
+            idx_riverward,
+            tv_riverward_max,
+        ) = flow.directional_tide_maxima(tv_tn)
+
+        q_bankward = discharge_at_directional_maxima(
+            tv_tn=tv_tn,
+            time_indices=idx_bankward,
+            path_distances=path_distances,
+            ship_length=ship_length,
+            ship_depth=ship_depth,
+        )
+
+        q_riverward = discharge_at_directional_maxima(
+            tv_tn=tv_tn,
+            time_indices=idx_riverward,
+            path_distances=path_distances,
+            ship_length=ship_length,
+            ship_depth=ship_depth,
+        )
+        # No sign correction needed: `tv_bankward_max`/`tv_riverward_max` and
+        # `discharge_at_directional_maxima`'s output both follow the same
+        # physically oriented convention (positive = towards river axis,
+        # negative = towards bank), so velocity and discharge already agree
+        # in sign for both directions.
+
+        idx_bankward_list.append(idx_bankward)
+        tv_bankward_max_list.append(tv_bankward_max)
+        q_bankward_list.append(q_bankward)
+
+        idx_riverward_list.append(idx_riverward)
+        tv_riverward_max_list.append(tv_riverward_max)
+        q_riverward_list.append(q_riverward)
 
         idx_ebb, idx_flood, tv_ebb, tv_flood = flow.tide_peaks_from_upar(upar_tn, tv_tn)
 
@@ -167,6 +218,22 @@ def append_tide_results(
         idx_flood_list.append(idx_flood)
         tv_ebb_list.append(tv_ebb)
         tv_flood_list.append(tv_flood)
+
+    if n_cases > 1:
+        tv_bankward_max_list.append(tv_bankward_max_list[1] - tv_bankward_max_list[0])
+        q_bankward_list.append(q_bankward_list[1] - q_bankward_list[0])
+
+        tv_riverward_max_list.append(
+            tv_riverward_max_list[1] - tv_riverward_max_list[0]
+        )
+        q_riverward_list.append(q_riverward_list[1] - q_riverward_list[0])
+    else:
+        # Keep the lists aligned with Reference and no second case.
+        tv_bankward_max_list.append(None)
+        q_bankward_list.append(None)
+
+        tv_riverward_max_list.append(None)
+        q_riverward_list.append(None)
 
     # difference ebb/flood
     if n_cases > 1:
@@ -245,11 +312,15 @@ def append_tide_results(
 
         for label, tv in zip(SHEET_LABELS, tv_ebb_list):
             if tv is not None:
-                support.to_excel(writer, velocity_column_labels, f"{label}_Ebb", rkm_km, tv)
+                support.to_excel(
+                    writer, velocity_column_labels, f"{label}_Ebb", rkm_km, tv
+                )
 
         for label, tv in zip(SHEET_LABELS, tv_flood_list):
             if tv is not None:
-                support.to_excel(writer, velocity_column_labels, f"{label}_Flood", rkm_km, tv)
+                support.to_excel(
+                    writer, velocity_column_labels, f"{label}_Flood", rkm_km, tv
+                )
 
         for label, tv in zip(SHEET_LABELS, tv_max_list):
             if tv is not None:
@@ -260,6 +331,58 @@ def append_tide_results(
                     rkm_km,
                     tv,
                 )
+
+        directional_column_labels = (
+            "raai (rkm)",
+            "max. representatieve dwarsstroomsnelheid (m/s)",
+            "instantaan dwarsstroomdebiet (m3/s)",
+        )
+
+        bankward_sheet_names = (
+            "Reference_BankMax",
+            "Intervention_BankMax",
+            "Difference_BankMax",
+        )
+
+        riverward_sheet_names = (
+            "Reference_RiverMax",
+            "Intervention_RiverMax",
+            "Difference_RiverMax",
+        )
+
+        for sheet_name, tv_max, discharge in zip(
+            bankward_sheet_names,
+            tv_bankward_max_list,
+            q_bankward_list,
+        ):
+            if tv_max is None or discharge is None:
+                continue
+
+            support.to_excel(
+                writer,
+                directional_column_labels,
+                sheet_name,
+                rkm_km,
+                tv_max,
+                discharge,
+            )
+
+        for sheet_name, tv_max, discharge in zip(
+            riverward_sheet_names,
+            tv_riverward_max_list,
+            q_riverward_list,
+        ):
+            if tv_max is None or discharge is None:
+                continue
+
+            support.to_excel(
+                writer,
+                directional_column_labels,
+                sheet_name,
+                rkm_km,
+                tv_max,
+                discharge,
+            )
 
     with pd.ExcelWriter(
         outputfiles[1],
@@ -276,14 +399,15 @@ def append_tide_results(
             "overschrijding (0=FALSE,1=TRUE)",
         )
 
-        for i, label in enumerate(SHEET_LABELS):
-            if maxQ_payload[i] is None:
+        for label, payload in zip(SHEET_LABELS, maxQ_payload):
+            if payload is None:
                 continue
+
             support.to_excel(
                 writer,
                 discharge_column_labels,
                 f"{label}_MaxQ",
-                *maxQ_payload[i],
+                *payload,
             )
 
     # ------------------------------------------------------------
@@ -298,7 +422,6 @@ def append_tide_results(
         annotation=None,
     )
 
-    
     # MaxQ snapshot plot
     if maxQ_time_index[0] >= 0:
         tv_qmax_plot = []
@@ -338,7 +461,6 @@ def append_tide_results(
             include_difference=False,
         )
 
-
     time_ref = None
     if tide.time_list and tide.time_list[0] is not None:
         time_ref = np.asarray(tide.time_list[0])
@@ -364,3 +486,87 @@ def append_tide_results(
         tide.fig_max_tv,
         invertx,
     )
+
+    plotter.create_figure_directional_maxima(
+        rkm,
+        tv_bankward_max_list,
+        q_bankward_list,
+        plotting.DirectionalMaximaConfig.BANKWARD_VELOCITY_TITLE,
+        plotting.DirectionalMaximaConfig.BANKWARD_DISCHARGE_TITLE,
+        invertx,
+        tide.fig_directional_bankward,
+    )
+
+    plotter.create_figure_directional_maxima(
+        rkm,
+        tv_riverward_max_list,
+        q_riverward_list,
+        plotting.DirectionalMaximaConfig.RIVERWARD_VELOCITY_TITLE,
+        plotting.DirectionalMaximaConfig.RIVERWARD_DISCHARGE_TITLE,
+        invertx,
+        tide.fig_directional_riverward,
+    )
+
+
+def discharge_at_directional_maxima(
+    tv_tn: np.ndarray,
+    time_indices: np.ndarray,
+    path_distances: np.ndarray,
+    ship_length: float,
+    ship_depth: float,
+) -> np.ndarray:
+    """
+    Calculate the instantaneous transverse discharge at the timestep of the
+    directional velocity maximum for every profile position.
+
+    Sign convention
+    ---------------
+    Returned values follow the same physically oriented sign convention as
+    `tv_tn` (positive = towards the river axis, negative = towards the bank),
+    which also matches `directional_tide_maxima`'s bankward/riverward output.
+    No extra sign correction is needed when combining the two.
+
+    Parameters
+    ----------
+    tv_tn : np.ndarray
+        Oriented representative transverse velocity, shape (nt, n).
+    time_indices : np.ndarray
+        Timestep index of the directional maximum per position, shape (n,).
+        A value of -1 indicates that no maximum exists for that direction.
+    path_distances : np.ndarray
+        Cumulative distance along the profile, shape (n,).
+    ship_length : float
+        Representative ship length [m].
+    ship_depth : float
+        Representative ship depth [m].
+
+    Returns
+    -------
+    np.ndarray
+        Instantaneous transverse discharge per position, shape (n,).
+    """
+    tv_tn = np.asarray(tv_tn, dtype=float)
+    time_indices = np.asarray(time_indices, dtype=int)
+
+    if tv_tn.ndim != 2:
+        raise ValueError("tv_tn must have shape (nt, n).")
+
+    if time_indices.shape != (tv_tn.shape[1],):
+        raise ValueError("time_indices must contain one index per profile position.")
+
+    discharge_at_maximum = np.full(tv_tn.shape[1], np.nan, dtype=float)
+
+    unique_timesteps = np.unique(time_indices[time_indices >= 0])
+
+    for time_index in unique_timesteps:
+        instantaneous_discharge = flow.local_transverse_discharge(
+            path_distances=path_distances,
+            transverse_velocity=tv_tn[time_index, :],
+            ship_length=ship_length,
+            ship_depth=ship_depth,
+        )
+
+        positions = time_indices == time_index
+        discharge_at_maximum[positions] = instantaneous_discharge[positions]
+
+    return discharge_at_maximum

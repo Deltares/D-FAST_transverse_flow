@@ -1,89 +1,115 @@
-
-import math
 import numpy as np
 
 
-def on_right_side(line_xy: np.ndarray, ref_xy: np.ndarray) -> bool:
+def sort_ref_by_chainage(ref_coords: np.ndarray) -> np.ndarray:
     """
-    Determine whether line_xy is to the right of ref_xy.
+    Sort reference line by increasing chainage.
 
-    Left and right are defined relative to the direction of ref_xy from
-    its first node to its last node.
+    Expected input:
+    - shape (n, 3): x, y, chainage
+    - shape (n, 2): x, y, assumed already in downstream order
+    """
+    ref_coords = np.asarray(ref_coords, dtype=float)
 
-    Assumptions
-    -----------
-    - line_xy and ref_xy do not cross each other
-    - neither line crosses itself
-    - line_xy lies alongside ref_xy, not before or after it
+    if ref_coords.shape[1] >= 3:
+        order = np.argsort(ref_coords[:, 2])
+        return ref_coords[order, :2]
 
-    Parameters
-    ----------
-    line_xy : np.ndarray
-        Array of shape (N, 2) containing x,y coordinates of the line.
-    ref_xy : np.ndarray
-        Array of shape (M, 2) containing x,y coordinates of the reference line.
+    return ref_coords[:, :2]
+
+
+def project_points_to_polyline(
+    points_xy: np.ndarray,
+    ref_xy: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Project each point to the nearest segment of a reference polyline.
 
     Returns
     -------
-    bool
-        True if line_xy lies on the right side of ref_xy, False otherwise.
+    projected_xy : np.ndarray
+        Coordinates of nearest projected points on the reference line, shape (n, 2).
+    segment_idx : np.ndarray
+        Index of nearest reference segment for each point.
     """
-    ref_npnt = ref_xy.shape[0]
-    npnt = line_xy.shape[0]
+    points_xy = np.asarray(points_xy, dtype=float)
+    ref_xy = np.asarray(ref_xy, dtype=float)
 
-    if ref_npnt < 2:
+    if ref_xy.shape[0] < 2:
         raise ValueError("Reference line must contain at least two points.")
 
-    # determine the reference point based on the line with the fewest points
-    if ref_npnt < npnt:
-        if ref_npnt == 2:
-            imin = 0
-            imind = 0
-            iminu = 1
-            p0 = (ref_xy[0] + ref_xy[1]) / 2
-        else:
-            imin = int(ref_npnt / 2)
-            imind = imin - 1
-            iminu = imin + 1
-            p0 = ref_xy[imin]
+    seg_start = ref_xy[:-1]
+    seg_end = ref_xy[1:]
+    seg_vec = seg_end - seg_start
+    seg_len2 = np.sum(seg_vec * seg_vec, axis=1)
 
-        # find the node on line_xy closest to p0
-        hpnt = np.argmin(((p0 - line_xy) ** 2).sum(axis=1))
-        hpxy = line_xy[hpnt]
-    else:
-        # determine the mid-point hpxy of line_xy
-        hpnt = int(npnt / 2)
-        hpxy = line_xy[hpnt]
+    if np.any(seg_len2 == 0):
+        raise ValueError("Reference line contains zero-length segments.")
 
-        # find the node on ref_xy closest to hpxy
-        imin = np.argmin(((hpxy - ref_xy) ** 2).sum(axis=1))
-        imind = imin - 1
-        iminu = imin + 1
-        p0 = ref_xy[imin]
+    projected_xy = np.empty_like(points_xy, dtype=float)
+    segment_idx = np.empty(points_xy.shape[0], dtype=int)
 
-    # direction to the midpoint of line_xy
-    theta = math.atan2(hpxy[1] - p0[1], hpxy[0] - p0[0])
+    for i, p in enumerate(points_xy):
+        rel = p - seg_start
+        frac = np.sum(rel * seg_vec, axis=1) / seg_len2
+        frac = np.clip(frac, 0.0, 1.0)
 
-    # direction from which ref_xy comes
-    if imin > 0:
-        phi1 = math.atan2(ref_xy[imind, 1] - p0[1], ref_xy[imind, 0] - p0[0])
-        # direction to which ref_xy goes
-        if imin < ref_xy.shape[0] - 1:
-            phi2 = math.atan2(ref_xy[iminu, 1] - p0[1], ref_xy[iminu, 0] - p0[0])
-        else:
-            phi2 = -phi1
-    else:
-        phi2 = math.atan2(ref_xy[iminu, 1] - p0[1], ref_xy[iminu, 0] - p0[0])
-        phi1 = -phi2
+        proj = seg_start + frac[:, np.newaxis] * seg_vec
+        dist2 = np.sum((proj - p) ** 2, axis=1)
 
-    # adjust directions of ref_xy such that both are larger than theta
-    if phi1 < theta:
-        phi1 += 2 * math.pi
-    if phi2 < theta:
-        phi2 += 2 * math.pi
+        j = int(np.argmin(dist2))
+        projected_xy[i] = proj[j]
+        segment_idx[i] = j
 
-    # theta points to the right if we encounter phi2 before phi1
-    # when rotating counter-clockwise starting from theta
-    right_side = phi2 < phi1
+    return projected_xy, segment_idx
 
-    return right_side
+
+def bankward_normal_sign(
+    profile_angles: np.ndarray,
+    sample_points_xy: np.ndarray,
+    riverkm_coords: np.ndarray,
+) -> np.ndarray:
+    """
+    Determine the sign needed to orient transverse velocity such that:
+
+    positive = towards river axis
+    negative = towards bank
+
+    The check is performed at the same points where transverse velocity is
+    evaluated: the ordered mesh/profile intersection points.
+
+    Downstream direction is defined as increasing river kilometre / chainage.
+
+    Returns
+    -------
+    np.ndarray
+        Sign array with shape (n,). Multiply raw transverse velocity by this sign.
+    """
+    profile_angles = np.asarray(profile_angles, dtype=float)
+    sample_points_xy = np.asarray(sample_points_xy, dtype=float)
+
+    if sample_points_xy.shape[0] != profile_angles.shape[0]:
+        raise ValueError(
+            "profile_angles and sample_points_xy must have the same length."
+        )
+
+    ref_xy = sort_ref_by_chainage(riverkm_coords)
+    projected_xy, _ = project_points_to_polyline(sample_points_xy, ref_xy)
+
+    # Vector from river axis to sample point.
+    # This is the local bankward direction.
+    bank_vec = sample_points_xy - projected_xy
+
+    # Positive normal used by flow.trans_velocity():
+    # w = u * (-sin(theta)) + v * cos(theta)
+    theta = np.radians(profile_angles)
+    normal_xy = np.column_stack((-np.sin(theta), np.cos(theta)))
+
+    dot = np.sum(normal_xy * bank_vec, axis=1)
+
+    # Negate: `dot` aligns with the bankward direction, but the convention
+    # used throughout the tool is positive = towards the river axis.
+    sign = -np.sign(dot)
+    sign[sign == 0] = -1.0
+
+    return sign

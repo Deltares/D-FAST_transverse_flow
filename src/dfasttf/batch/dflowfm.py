@@ -68,7 +68,6 @@ def _select_time_window(ds, start: str | None, stop: str | None):
             "Both TideStart and TideStop must be provided when defining a tide analysis window."
         )
 
-    print(f"Original ds: {ds['time'].values}")
     try:
         t_start = np.datetime64(start.replace(" ", "T"))
         t_stop = np.datetime64(stop.replace(" ", "T"))
@@ -81,7 +80,7 @@ def _select_time_window(ds, start: str | None, stop: str | None):
         raise RuntimeError("TideStop must be later than TideStart.")
 
     ds_sel = ds.sel(time=slice(t_start, t_stop))
-    print(f"Subset of ds: {ds_sel['time'].values}")
+
     if "time" not in ds_sel.coords or ds_sel["time"].size < 2:
         raise RuntimeError(
             "Selected tide window does not contain enough timesteps."
@@ -124,7 +123,6 @@ def check_time_coverage(
         )
 
     t = ds["time"].values
-    print(np.datetime64(t[-1]), np.datetime64(t[0]))
     duration = np.datetime64(t[-1]) - np.datetime64(t[0])
 
     min_duration = np.timedelta64(24 * 60 + 50, "m")  # 24h50m
@@ -396,7 +394,6 @@ def load_simulation_data(configuration: Config, section: str):
         if tide_flag:
             if info.kind == FileKind.MAP:
                 ds_tide = _select_time_window(ds, tide_start, tide_stop)
-                print(ds_tide)
 
                 # selected-window checks
                 check_time_coverage(ds_tide, section, file, selected_window=True)
@@ -556,13 +553,13 @@ def slice_ugrid(
     simulation_data: UgridDataset,
     profile_coords: np.ndarray,
     riverkm_coords: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
     edge_coords = extract_edge_coords(simulation_data, VARN_FACE_X_BND, VARN_FACE_Y_BND)
     sliced = slice_mesh_with_polyline(edge_coords, profile_coords, riverkm_coords)
     if sliced is None:
         return None
-    rkm, path_distances, segment_idx, face_idx = sliced
-    return rkm, path_distances, segment_idx, face_idx
+    rkm, path_distances, segment_idx, face_idx, intersects_ordered = sliced
+    return rkm, path_distances, segment_idx, face_idx, intersects_ordered
 
 
 def read_profile_lines(profiles_file: Path) -> DataFrame:
@@ -589,7 +586,7 @@ def extract_edge_coords(
 
 def slice_mesh_with_polyline(
     edge_coords: np.ndarray, profile_coords: np.ndarray, xykm_coords: np.ndarray
-) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
     """Slices mesh edges with a profile line and returns for each intersection point:
     pkm: projected value of xykm, found by interpolation
     path_distances: distance along path formed by intersection points
@@ -614,7 +611,7 @@ def slice_mesh_with_polyline(
     path_distances = geometry.calculate_curve_distance(
         intersects_ordered[:, 0], intersects_ordered[:, 1]
     )
-    return pkm, path_distances, segment_idx, face_idx
+    return pkm, path_distances, segment_idx, face_idx, intersects_ordered
 
 
 def find_intersects(

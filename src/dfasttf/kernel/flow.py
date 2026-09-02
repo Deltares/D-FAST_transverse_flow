@@ -228,49 +228,243 @@ def tide_peaks_from_upar(
     return idx_ebb, idx_flood, tv_ebb, tv_flood
 
 
-def orient_transverse_by_profile_side(
+def orient_transverse_by_bankward_sign(
     transverse_velocity: np.ndarray,
-    profile_is_right: bool,
+    bankward_sign: np.ndarray,
 ) -> np.ndarray:
     """
-    Reorient transverse velocity based on whether the profile lies on the
-    right or left side of the river center line.
+    Orient transverse velocity such that:
 
-    Convention
-    ----------
-    Positive values should represent flow toward the bank and negative values
-    flow toward the river center.
-
-    Assumption
-    ----------
-    The current transverse sign convention produced by `trans_velocity()` is
-    assumed to correspond to:
-    - right-side profiles  -> keep sign
-    - left-side profiles   -> flip sign
-
-    If validation shows the opposite convention is needed, simply swap the sign
-    assignment below.
+    positive = towards river axis
+    negative = towards bank
 
     Parameters
     ----------
     transverse_velocity : np.ndarray
-        Transverse velocity array, shape (n,) or (nt, n).
-    profile_is_right : bool
-        True if the profile lies on the right side of the center line.
+        Shape (n,) for snapshot or (nt, n) for tide.
+    bankward_sign : np.ndarray
+        Shape (n,), values +1 or -1.
 
     Returns
     -------
     np.ndarray
-        Reoriented transverse velocity with the same shape as input.
+        Oriented transverse velocity with the same shape as input.
     """
-    sign = 1.0 if profile_is_right else -1.0
-
     transverse_velocity = np.asarray(transverse_velocity)
+    bankward_sign = np.asarray(bankward_sign, dtype=float)
+
+    if bankward_sign.ndim != 1:
+        raise ValueError("bankward_sign must be one-dimensional.")
+
+    if not np.all(np.isin(bankward_sign, (-1.0, 1.0))):
+        raise ValueError("bankward_sign may only contain -1 and +1.")
 
     if transverse_velocity.ndim == 1:
-        return transverse_velocity * sign
+        if transverse_velocity.shape[0] != bankward_sign.shape[0]:
+            raise ValueError(
+                "transverse_velocity and bankward_sign length mismatch."
+            )
+        return transverse_velocity * bankward_sign
 
     if transverse_velocity.ndim == 2:
-        return transverse_velocity * sign
+        if transverse_velocity.shape[1] != bankward_sign.shape[0]:
+            raise ValueError(
+                "transverse_velocity and bankward_sign length mismatch."
+            )
+        return transverse_velocity * bankward_sign[np.newaxis, :]
 
-    raise ValueError("transverse_velocity must be 1D or 2D")
+    raise ValueError("transverse_velocity must be 1D or 2D.")
+
+
+def directional_tide_maxima(
+    tv_tn: np.ndarray,
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+]:
+    """
+    Determine the maximum bankward and riverward transverse velocity
+    for every profile position.
+
+    Sign convention
+    ---------------
+    tv_tn > 0 : towards the river axis
+    tv_tn < 0 : towards the bank
+
+    Parameters
+    ----------
+    tv_tn : np.ndarray
+        Oriented representative transverse velocity, shape (nt, n).
+
+    Returns
+    -------
+    idx_bankward : np.ndarray
+        Timestep of maximum bankward velocity per position, shape (n,).
+        Value -1 indicates that no bankward flow occurs.
+    tv_bankward_max : np.ndarray
+        Maximum bankward velocity per position, shape (n,). Negative values.
+    idx_riverward : np.ndarray
+        Timestep of maximum riverward velocity per position, shape (n,).
+        Value -1 indicates that no riverward flow occurs.
+    tv_riverward_max : np.ndarray
+        Maximum riverward velocity per position, shape (n,). Positive values.
+    """
+    tv_tn = np.asarray(tv_tn, dtype=float)
+
+    if tv_tn.ndim != 2:
+        raise ValueError("tv_tn must have shape (nt, n).")
+
+    _, n = tv_tn.shape
+
+    idx_bankward = np.full(n, -1, dtype=int)
+    idx_riverward = np.full(n, -1, dtype=int)
+
+    tv_bankward_max = np.full(n, np.nan, dtype=float)
+    tv_riverward_max = np.full(n, np.nan, dtype=float)
+
+    for i in range(n):
+        series = tv_tn[:, i]
+
+        riverward_mask = np.isfinite(series) & (series > 0.0)
+        if np.any(riverward_mask):
+            valid_indices = np.flatnonzero(riverward_mask)
+            local_index = int(np.argmax(series[riverward_mask]))
+            time_index = valid_indices[local_index]
+
+            idx_riverward[i] = time_index
+            tv_riverward_max[i] = series[time_index]
+
+        bankward_mask = np.isfinite(series) & (series < 0.0)
+        if np.any(bankward_mask):
+            valid_indices = np.flatnonzero(bankward_mask)
+            local_index = int(np.argmin(series[bankward_mask]))
+            time_index = valid_indices[local_index]
+
+            idx_bankward[i] = time_index
+            tv_bankward_max[i] = series[time_index]
+
+    return (
+        idx_bankward,
+        tv_bankward_max,
+        idx_riverward,
+        tv_riverward_max,
+    )
+
+
+def local_transverse_discharge(
+    path_distances: np.ndarray,
+    transverse_velocity: np.ndarray,
+    ship_length: float,
+    ship_depth: float,
+) -> np.ndarray:
+    """
+    Calculate the instantaneous transverse discharge over a ship-length
+    window centred on every profile position.
+
+    Positive discharge represents flow towards the river axis.
+    Negative discharge represents flow towards the bank.
+
+    Duplicate profile positions are combined by averaging their finite
+    transverse velocities.
+    """
+    path_distances = np.asarray(path_distances, dtype=float)
+    transverse_velocity = np.asarray(transverse_velocity, dtype=float)
+
+    if path_distances.ndim != 1:
+        raise ValueError("path_distances must be one-dimensional.")
+
+    if transverse_velocity.ndim != 1:
+        raise ValueError("transverse_velocity must be one-dimensional.")
+
+    if path_distances.shape != transverse_velocity.shape:
+        raise ValueError(
+            "path_distances and transverse_velocity must have the same shape. "
+            f"Got {path_distances.shape} and {transverse_velocity.shape}."
+        )
+
+    if path_distances.size < 2:
+        raise ValueError("At least two profile positions are required.")
+
+    if not np.all(np.isfinite(path_distances)):
+        raise ValueError("path_distances must contain only finite values.")
+
+    if np.any(np.diff(path_distances) < 0.0):
+        raise ValueError("path_distances must be non-decreasing.")
+
+    if ship_length <= 0.0:
+        raise ValueError("ship_length must be larger than zero.")
+
+    if ship_depth <= 0.0:
+        raise ValueError("ship_depth must be larger than zero.")
+
+    # Combine duplicate profile positions. The inverse index is used to map
+    # the calculated discharge back to the original profile positions.
+    unique_distances, inverse_indices = np.unique(
+        path_distances,
+        return_inverse=True,
+    )
+
+    if unique_distances.size < 2:
+        raise ValueError(
+            "At least two unique profile positions are required."
+        )
+
+    unique_velocity = np.full(unique_distances.shape, np.nan, dtype=float)
+
+    for unique_index in range(unique_distances.size):
+        values = transverse_velocity[inverse_indices == unique_index]
+        finite_values = values[np.isfinite(values)]
+
+        if finite_values.size > 0:
+            unique_velocity[unique_index] = np.mean(finite_values)
+
+    valid = np.isfinite(unique_velocity)
+
+    if np.count_nonzero(valid) < 2:
+        return np.full(path_distances.shape, np.nan, dtype=float)
+
+    discharge_unique = np.full(unique_distances.shape, np.nan, dtype=float)
+    half_ship_length = ship_length / 2.0
+
+    for i, center_distance in enumerate(unique_distances):
+        window_start = center_distance - half_ship_length
+        window_stop = center_distance + half_ship_length
+
+        # A complete ship-length window must fit within the profile.
+        if (
+            window_start < unique_distances[0]
+            or window_stop > unique_distances[-1]
+        ):
+            continue
+
+        internal = (
+            valid
+            & (unique_distances > window_start)
+            & (unique_distances < window_stop)
+        )
+
+        integration_distance = np.concatenate(
+            (
+                [window_start],
+                unique_distances[internal],
+                [window_stop],
+            )
+        )
+
+        integration_velocity = np.interp(
+            integration_distance,
+            unique_distances[valid],
+            unique_velocity[valid],
+        )
+
+        velocity_integral = np.trapezoid(
+            integration_velocity,
+            integration_distance,
+        )
+
+        discharge_unique[i] = velocity_integral * ship_depth
+
+    # Map the discharge back to the original profile positions.
+    return discharge_unique[inverse_indices]
