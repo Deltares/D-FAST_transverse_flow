@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 
 from dfasttf.batch import plotting, support
+from dfasttf.batch.cross_flow import TransverseDischarge, prepare_data_for_excel
+from dfasttf.batch.plotting import configs
 from dfasttf.config import Config
 from dfasttf.kernel import flow
 
@@ -17,13 +19,14 @@ class TideInputs:
     ucx: list[np.ndarray]  # each (nt, n)
     ucy: list[np.ndarray]  # each (nt, n)
     h: list[np.ndarray]  # each (nt, n)
-    time_list: list[np.ndarray | None]  # per case (nt,)
-    fig_vel: Path
-    fig_qmax: Path
-    fig_upar: Path
-    fig_max_tv: Path
-    fig_directional_bankward: Path
-    fig_directional_riverward: Path
+    time_list: list[np.ndarray | None] # per case (nt,)
+    fig_vel: Path | None = None
+    fig_upar: Path | None = None
+    fig_max_tv: Path | None = None
+    fig_directional_bankward: Path | None = None   
+    fig_directional_riverward: Path | None = None
+    fig_maxQ: Path | None = None
+    fig_maxU: Path | None = None
 
 
 def _validate_tide_inputs(
@@ -68,14 +71,45 @@ def _validate_tide_inputs(
 
 def _maxQ_for_tv_tn(
     tv_tn: np.ndarray,
-    td,
+    transverse_discharge: TransverseDischarge,
     rkm: np.ndarray,
     path_distances: np.ndarray,
     ship_depth: float,
     ship_length: float,
     criteria: tuple[float, float],
-    prepare_data_for_excel,
-):
+) -> tuple[float, int, Any, Any, Any]:
+    """Calculate the maximum transverse discharge for a given time series of transverse velocity.
+
+    Parameters
+    ----------
+    tv_tn : np.ndarray
+        Time series of transverse velocity (nt, n).
+    transverse_discharge : TransverseDischarge
+        Object to compute transverse discharge.
+    rkm : np.ndarray
+        River kilometer positions.
+    path_distances : np.ndarray
+        Path distances along the cross-section.
+    ship_depth : float
+        Depth of the ship.
+    ship_length : float
+        Length of the ship.
+    criteria : tuple[float, float]
+        Criteria for transverse discharge computation.
+
+    Returns
+    -------
+    qmax : float
+        Maximum transverse discharge.
+    t_best : int
+        Time index corresponding to the maximum transverse discharge.
+    payload_best : Any
+        Prepared data for Excel corresponding to the maximum transverse discharge.
+    xy_best : Any
+        XY blocks corresponding to the maximum transverse discharge.
+    crit_best : Any
+        Critical values corresponding to the maximum transverse discharge.
+    """
     qmax = -np.inf
     t_best = -1
     payload_best = None
@@ -83,7 +117,7 @@ def _maxQ_for_tv_tn(
     crit_best = None
 
     for t in range(tv_tn.shape[0]):
-        discharges, crit_values, xy_blocks = td.compute(
+        discharges, crit_values, xy_blocks = transverse_discharge.compute(
             rkm, path_distances, [tv_tn[t]], ship_depth, ship_length, criteria
         )
         if discharges[0].size == 0:
@@ -107,7 +141,7 @@ def _maxQ_for_tv_tn(
     return qmax, t_best, payload_best, xy_best, crit_best
 
 
-def append_tide_results(
+def run_tide_analysis(
     tide: TideInputs | None,
     rkm: np.ndarray,
     path_distances: np.ndarray,
@@ -115,8 +149,7 @@ def append_tide_results(
     bankward_sign: np.ndarray,
     configuration: Config,
     outputfiles: list[Path],
-    td,
-    prepare_data_for_excel,
+    transverse_discharge: TransverseDischarge,
     plotter: plotting.CrossFlow,
 ) -> None:
     """
@@ -219,30 +252,6 @@ def append_tide_results(
         tv_ebb_list.append(tv_ebb)
         tv_flood_list.append(tv_flood)
 
-    if n_cases > 1:
-        tv_bankward_max_list.append(tv_bankward_max_list[1] - tv_bankward_max_list[0])
-        q_bankward_list.append(q_bankward_list[1] - q_bankward_list[0])
-
-        tv_riverward_max_list.append(
-            tv_riverward_max_list[1] - tv_riverward_max_list[0]
-        )
-        q_riverward_list.append(q_riverward_list[1] - q_riverward_list[0])
-    else:
-        # Keep the lists aligned with Reference and no second case.
-        tv_bankward_max_list.append(None)
-        q_bankward_list.append(None)
-
-        tv_riverward_max_list.append(None)
-        q_riverward_list.append(None)
-
-    # difference ebb/flood
-    if n_cases > 1:
-        tv_ebb_list.append(tv_ebb_list[1] - tv_ebb_list[0])
-        tv_flood_list.append(tv_flood_list[1] - tv_flood_list[0])
-    else:
-        tv_ebb_list.append(None)
-        tv_flood_list.append(None)
-
     # max transverse per point
     idx_tvmax_list = []
     tv_max_list = []
@@ -252,11 +261,6 @@ def append_tide_results(
         idx_tvmax_list.append(idx_tvmax)
         tv_max_list.append(tv_max)
 
-    if n_cases > 1:
-        tv_max_list.append(tv_max_list[1] - tv_max_list[0])
-    else:
-        tv_max_list.append(None)
-
     # maxQ
     maxQ_value = []
     maxQ_time_index = []
@@ -265,13 +269,12 @@ def append_tide_results(
     for tv_tn in tv_series:
         q, tbest, payload, _, _ = _maxQ_for_tv_tn(
             tv_tn,
-            td,
+            transverse_discharge,
             rkm,
             path_distances,
             ship_depth,
             ship_length,
             CRITERIA,
-            prepare_data_for_excel,
         )
         maxQ_value.append(q)
         maxQ_time_index.append(tbest)
@@ -281,13 +284,12 @@ def append_tide_results(
         tv_diff = tv_series[1] - tv_series[0]
         q, tbest, payload, _, _ = _maxQ_for_tv_tn(
             tv_diff,
-            td,
+            transverse_discharge,
             rkm,
             path_distances,
             ship_depth,
             ship_length,
             CRITERIA,
-            prepare_data_for_excel,
         )
         maxQ_value.append(q)
         maxQ_time_index.append(tbest)
@@ -308,32 +310,35 @@ def append_tide_results(
         if_sheet_exists="replace",
         engine="openpyxl",
     ) as writer:
-        velocity_column_labels = ("raai (rkm)", "dwarsstroomsnelheid (m/s)")
+        velocity_column_labels = ("raai km", "dwarsstroomsnelheid (m/s)")
 
-        for label, tv in zip(SHEET_LABELS, tv_ebb_list):
-            if tv is not None:
+        excel_data = support.construct_excel_data(tv_ebb_list)
+        for label, data in zip(SHEET_LABELS, excel_data):
+            if data is not None:
                 support.to_excel(
-                    writer, velocity_column_labels, f"{label}_Ebb", rkm_km, tv
+                    writer, velocity_column_labels, f"{label}_Ebb", rkm_km, data
                 )
 
-        for label, tv in zip(SHEET_LABELS, tv_flood_list):
-            if tv is not None:
+        excel_data = support.construct_excel_data(tv_flood_list)
+        for label, data in zip(SHEET_LABELS, excel_data):
+            if data is not None:
                 support.to_excel(
-                    writer, velocity_column_labels, f"{label}_Flood", rkm_km, tv
+                    writer, velocity_column_labels, f"{label}_Flood", rkm_km, data
                 )
 
-        for label, tv in zip(SHEET_LABELS, tv_max_list):
-            if tv is not None:
+        excel_data = support.construct_excel_data(tv_max_list)
+        for label, data in zip(SHEET_LABELS, excel_data):
+            if data is not None:
                 support.to_excel(
                     writer,
                     velocity_column_labels,
                     f"{label}_MaxTransverse",
                     rkm_km,
-                    tv,
+                    data,
                 )
 
         directional_column_labels = (
-            "raai (rkm)",
+            "raai km",
             "max. representatieve dwarsstroomsnelheid (m/s)",
             "instantaan dwarsstroomdebiet (m3/s)",
         )
@@ -415,37 +420,38 @@ def append_tide_results(
     # ------------------------------------------------------------
     plotter.create_figure_tide_velocities(
         rkm,
-        tv_ebb_list,
-        tv_flood_list,
+        [abs(tv) for tv in tv_ebb_list],
+        [abs(tv) for tv in tv_flood_list],
         invertx,
         tide.fig_vel,
+        include_difference=True,
         annotation=None,
     )
 
-    # MaxQ snapshot plot
+    # Transverse flow at time of max. transverse discharge, including assessment:
     if maxQ_time_index[0] >= 0:
         tv_qmax_plot = []
         xy_qmax_plot = []
         crit_qmax_plot = []
 
         # Reference
-        t_ref = maxQ_time_index[0]
+        t_ref = maxQ_time_index[1] if n_cases > 1 else maxQ_time_index[0] # take the time of the WithIntervention case if it exists, otherwise the reference case
         tv_ref_plot = tv_series[0][t_ref]
         tv_qmax_plot.append(tv_ref_plot)
 
-        discharges_ref, crit_values_ref, xy_blocks_ref = td.compute(
+        discharges_ref, crit_values_ref, xy_blocks_ref = transverse_discharge.compute(
             rkm, path_distances, [tv_ref_plot], ship_depth, ship_length, CRITERIA
         )
         xy_qmax_plot.extend(xy_blocks_ref)
         crit_qmax_plot.extend(crit_values_ref)
 
         # WithIntervention
-        if n_cases > 1 and maxQ_time_index[1] >= 0:
+        if n_cases > 1:
             t_wi = maxQ_time_index[1]
             tv_wi_plot = tv_series[1][t_wi]
             tv_qmax_plot.append(tv_wi_plot)
 
-            discharges_wi, crit_values_wi, xy_blocks_wi = td.compute(
+            discharges_wi, crit_values_wi, xy_blocks_wi = transverse_discharge.compute(
                 rkm, path_distances, [tv_wi_plot], ship_depth, ship_length, CRITERIA
             )
             xy_qmax_plot.extend(xy_blocks_wi)
@@ -453,19 +459,20 @@ def append_tide_results(
 
         plotter.create_figure(
             rkm,
-            tv_qmax_plot,
+            [abs(tv) for tv in tv_qmax_plot],
             xy_qmax_plot,
             crit_qmax_plot,
             invertx,
-            tide.fig_qmax,
-            include_difference=False,
+            tide.fig_maxQ,
+            include_difference=True,
         )
 
     time_ref = None
     if tide.time_list and tide.time_list[0] is not None:
         time_ref = np.asarray(tide.time_list[0])
 
-    plotter.create_figure_alongstream_timeseries(
+    longitudinal_plotter = plotting.LongitudinalFlow()
+    longitudinal_plotter.create_figure_tide_timeseries(
         time_ref,
         upar_series[0],
         rkm,
@@ -483,16 +490,14 @@ def append_tide_results(
         upar_series[0],
         idx_tvmax_list[0],
         tv_series[0],
-        tide.fig_max_tv,
+        tide.fig_maxU,
         invertx,
     )
 
     plotter.create_figure_directional_maxima(
         rkm,
         tv_bankward_max_list,
-        q_bankward_list,
-        plotting.DirectionalMaximaConfig.BANKWARD_VELOCITY_TITLE,
-        plotting.DirectionalMaximaConfig.BANKWARD_DISCHARGE_TITLE,
+        configs.TideCrossFlowConfig.BANKWARD_VELOCITY_TITLE,
         invertx,
         tide.fig_directional_bankward,
     )
@@ -500,9 +505,7 @@ def append_tide_results(
     plotter.create_figure_directional_maxima(
         rkm,
         tv_riverward_max_list,
-        q_riverward_list,
-        plotting.DirectionalMaximaConfig.RIVERWARD_VELOCITY_TITLE,
-        plotting.DirectionalMaximaConfig.RIVERWARD_DISCHARGE_TITLE,
+        configs.TideCrossFlowConfig.RIVERWARD_VELOCITY_TITLE,
         invertx,
         tide.fig_directional_riverward,
     )

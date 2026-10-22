@@ -81,7 +81,7 @@ def run_1d(
                     d[1],
                     profile_angles,
                     d[2],
-                )
+            )
 
     plotting.Ice1D().create_figure(
         rkm, velocity_magnitude, angle_diff, configuration, figfile
@@ -146,12 +146,12 @@ def correct_model_results(
     if water_uplift:
         froude_number = froude.water_uplift(froude_number)
     if tide_flag and "time" in froude_number.dims:
-        froude_number = get_percentile(froude_number, percentile=50)
+        froude_number = get_percentile(froude_number)
     return froude_number
 
 def get_percentile(
     da: DataArray,
-    percentile: int = 80
+    percentile: int = 100
 ) -> DataArray:
     """Takes the specified percentile of values over time.
 
@@ -160,7 +160,7 @@ def get_percentile(
     da : DataArray
         Values over time, dimension 'time' must be present
     percentile : int
-        Desired percentile (0-100), default is 80
+        Desired percentile (0-100), default is 100
 
     Returns
     ----------

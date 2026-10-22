@@ -9,7 +9,6 @@ from dfastmi.batch.core import _get_output_dir
 from dfastmi.batch.PlotOptions import PlotOptions
 from dfastmi.config.ConfigFileOperations import ConfigFileOperations
 from dfastmi.io.DFastAnalysisConfigFileParser import DFastAnalysisConfigFileParser
-from xugrid import data
 
 GENERAL_SECTION = "General"
 BOUNDING_BOX_SECTION = "BoundingBox"

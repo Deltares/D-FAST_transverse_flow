@@ -201,7 +201,7 @@ def tide_peaks_from_upar(
     tv_tn: np.ndarray,  # (nt, n)
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Given u_parallel(t,i) and tv(t,i), compute per-point peak ebb/flood indices and tv at those indices.
+    Given u_parallel(t,i) and tv(t,i), compute per-point peak ebb/flood indices and transverse velocity at those indices.
 
     Returns
     -------

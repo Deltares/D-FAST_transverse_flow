@@ -20,13 +20,13 @@ class Plot1DConfig:
         DELTARES_DARKGREEN,
     )  # reference, intervention, difference
     LABELS = ["Referentie", "Plansituatie", "Verschil"]
+    FRACTION: int = 5
 
 
 @dataclass
 class FlowfieldConfig:
     VELOCITY_YLABEL: str = "stroomsnelheid\nmagnitude [m/s]"
     VELOCITY_DIFF_YLABEL: str = "verschil plansituatie\n-referentie [m/s]"
-    VELOCITY_YLIM: tuple = (0.0, 0.5)
     VELOCITY_YTICKS_MAJOR: float = 0.1
     VELOCITY_YTICKS_MINOR: float = 0.05
     ANGLE_YTICKS_MAJOR: float = 30.0
@@ -34,7 +34,6 @@ class FlowfieldConfig:
     ANGLE_YLIM: tuple = (-90.0, 90.0)
     ANGLE_PRIMARY_YLABEL: str = "stromingshoek t.o.v.\nprofiellijn [graden]"
     ANGLE_DIFF_YLABEL: str = "verschil plansituatie\n-referentie [graden]"
-    FRACTION: float = 5.0
 
 
 @dataclass
@@ -49,45 +48,60 @@ class FroudeConfig:
 
     class Diff:
         bins: list = [0, 0.08, 0.1, 0.15, np.inf]
-        colors = ("green", "red", "blue")
+        colors = ("green", "red", "blue", "yellow")
         labels: list[str] = [
             f"Fr van < {bins[1]} naar >= {bins[1]}",
             f"Fr van > {bins[1]} naar <= {bins[1]}",
-            "droog in referentie,\nnat in plansituatie"
+            "droog in referentie,\nnat in plansituatie",
+            "nat in referentie,\ndroog in plansituatie"
         ]
 
 
 @dataclass
 class CrossFlowConfig:
+    """General styling for the transverse flow figures."""
     XLABEL = Plot1DConfig.XLABEL
     YLABEL: str = "representatieve dwars-\nstroomsnelheid [m/s]"
     DIFF_YLABEL: str = FlowfieldConfig.VELOCITY_DIFF_YLABEL
     EBB_TITLE: str = "Bij piek ebstroming (per cel)"
     FLOOD_TITLE: str = "Bij piek vloedstroming (per cel)"
     CRIT_LABEL: str = "Lokaal criterium"
-    YLIM: tuple = (-0.3, 0.3)
-    FRACTION: int = 3
+    YTICKS_MAJOR: float = 0.15
+    YTICKS_MINOR: float = 0.05
     YTICKS_MAJOR = 0.15
     YTICKS_MINOR = 0.05
 
+@dataclass
+class LongitudinalFlowConfig:
+    XLABEL: str = "raai km"
+    YLABEL: str = "langsstroomsnelheid [m/s]"
+    DIFF_YLABEL: str = FlowfieldConfig.VELOCITY_DIFF_YLABEL
+    MAX_EBB_LABEL: str = "max. ebstroming\n(per rkm)"
+    MAX_FLOOD_LABEL: str = "max. vloedstroming\n(per rkm)"
+    YTICKS_MAJOR: float = 0.5
+    YTICKS_MINOR: float = 0.1
 
 @dataclass
-class DirectionalMaximaConfig:
-    """Styling for the bankward/riverward directional-maxima figures.
+class TideCrossFlowConfig:
+    """Specific styling of the transverse flow figures for tide conditions.
 
     Per profile position these figures show the maximum transverse velocity
-    in one direction (top row) together with the instantaneous transverse
-    discharge at that same moment (bottom row) (see RBK review: velocity and
-    discharge must be taken at the same phase to be physically comparable).
-    Bankward and riverward are rendered as two separate figures.
+    in one direction. Bankward and riverward are rendered as two separate figures.
     """
-    XLABEL = Plot1DConfig.XLABEL
-    VELOCITY_YLABEL: str = "max. representatieve\ndwarsstroomsnelheid [m/s]"
-    DISCHARGE_YLABEL: str = "instantaan dwars-\nstroomdebiet [m³/s]"
-    VELOCITY_DIFF_YLABEL: str = "verschil plansituatie\n-referentie [m/s]"
-    DISCHARGE_DIFF_YLABEL: str = "verschil plansituatie\n-referentie [m³/s]"
-    BANKWARD_VELOCITY_TITLE: str = "Max. snelheid naar de oever (per cel)"
-    BANKWARD_DISCHARGE_TITLE: str = "Debiet bij max. snelheid naar de oever (per cel)"
-    RIVERWARD_VELOCITY_TITLE: str = "Max. snelheid naar de rivier (per cel)"
-    RIVERWARD_DISCHARGE_TITLE: str = "Debiet bij max. snelheid naar de rivier (per cel)"
+    #DISCHARGE_YLABEL: str = "instantaan dwars-\nstroomdebiet [m³/s]"
+    #DISCHARGE_DIFF_YLABEL: str = "verschil plansituatie\n-referentie [m³/s]"
+    BANKWARD_VELOCITY_TITLE: str = "Max. snelheid richting de oever (per cel)"
+    #BANKWARD_DISCHARGE_TITLE: str = "Debiet bij max. snelheid naar de oever (per cel)"
+    RIVERWARD_VELOCITY_TITLE: str = "Max. snelheid richting de rivieras (per cel)"
+    #RIVERWARD_DISCHARGE_TITLE: str = "Debiet bij max. snelheid naar de rivier (per cel)"
 
+@dataclass
+class TideLongitudinalFlowConfig:
+    """Specific styling of the longitudinal flow figures for tide conditions."""
+    THRESHOLD: float = 1.0
+    THRESHOLD_LABEL: str = f"drempel ±{THRESHOLD:.2f} m/s"
+    CBAR_LABEL: str = "raai km"
+    XLABEL: str = "tijd"
+    AVERAGE_FLOW_LABEL: str = "gemiddelde"
+    MAX_EBB_LABEL: str = "max. ebstroming\n(per rkm)"
+    MAX_FLOOD_LABEL: str = "max. vloedstroming\n(per rkm)"

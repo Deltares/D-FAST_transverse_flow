@@ -204,22 +204,7 @@ def save_1d_figures(
     figext = configuration.plotsettings.options.plot_extension
     outputdir = configuration.outputdir
 
-    # ---- Ice (old) ----
-    base = f"{section}_profile{profile_index}_velocity_angle"
-    figfile = construct_figure_filename(figdir, base, figext)
-    outputfile = (outputdir / base).with_suffix(".xlsx")
-    ice.run_1d(
-        profile_data["uc"],
-        profile_data["ucx"],
-        profile_data["ucy"],
-        angles,
-        rkm,
-        configuration,
-        figfile,
-        outputfile,
-    )
-
-    # ---- Snapshot cross-flow outputs ----
+    # ---- Snapshot flow outputs ----
     outputfiles = []
     base = f"{section}_profile{profile_index}_transverse_velocity"
     outputfiles.append((outputdir / base).with_suffix(".xlsx"))
@@ -227,6 +212,13 @@ def save_1d_figures(
     base = f"{section}_profile{profile_index}_transverse_flow"
     figfile_cross = construct_figure_filename(figdir, base, figext)
     outputfiles.append((outputdir / base).with_suffix(".xlsx"))
+
+    base = f"{section}_profile{profile_index}_velocity_angle"
+    figfile_velocity_angle = construct_figure_filename(figdir, base, figext)
+    outputfile_velocity_angle = (outputdir / base).with_suffix(".xlsx")
+    profile_uc = profile_data["uc"]
+    profile_ucx = profile_data["ucx"]
+    profile_ucy = profile_data["ucy"]
 
     # ---- Tide analysis inputs (optional) ----
     tide_flag = configuration.general.bool_flags.get("tide", False)
@@ -240,19 +232,19 @@ def save_1d_figures(
         base = f"{section}_profile{profile_index}_transverse_flow_ebb_flood"
         figfile_tide_vel = construct_figure_filename(figdir, base, figext)
 
-        base = f"{section}_profile{profile_index}_transverse_flow_maxQ"
-        figfile_tide_q = construct_figure_filename(figdir, base, figext)
-
-        base = f"{section}_profile{profile_index}_tide_alongstream_velocity_time"
+        base = f"{section}_profile{profile_index}_longitudinal_flow_tide"
         figfile_tide_upar = construct_figure_filename(figdir, base, figext)
 
-        base = f"{section}_profile{profile_index}_tide_max_transverse"
-        figfile_tide_max_tv = construct_figure_filename(figdir, base, figext)
+        base = f"{section}_profile{profile_index}_transverse_flow_tide_maxU"
+        figfile_tide_maxU = construct_figure_filename(figdir, base, figext)
 
-        base = f"{section}_profile{profile_index}_tide_directional_maxima_bankward"
+        base = f"{section}_profile{profile_index}_transverse_flow_tide_maxQ"
+        figfile_tide_q = construct_figure_filename(figdir, base, figext)
+
+        base = f"{section}_profile{profile_index}_transverse_flow_tide_bankward"
         figfile_tide_directional_bankward = construct_figure_filename(figdir, base, figext)
 
-        base = f"{section}_profile{profile_index}_tide_directional_maxima_riverward"
+        base = f"{section}_profile{profile_index}_transverse_flow_tide_riverward"
         figfile_tide_directional_riverward = construct_figure_filename(figdir, base, figext)
 
         tide_inputs = tide_module.TideInputs(
@@ -260,15 +252,35 @@ def save_1d_figures(
             ucy=profile_data_tide["ucy"],
             h=profile_data_tide["h"],
             time_list=profile_data_tide["time"],
-            fig_vel=figfile_tide_vel,
-            fig_qmax=figfile_tide_q,
             fig_upar=figfile_tide_upar,
-            fig_max_tv=figfile_tide_max_tv,
             fig_directional_bankward=figfile_tide_directional_bankward,
             fig_directional_riverward=figfile_tide_directional_riverward,
+            fig_maxQ=figfile_tide_q,
+            fig_vel=figfile_tide_vel,
+            fig_maxU=figfile_tide_maxU,
         )
 
-    # ---- Single call: snapshot always, tide optional inside run() ----
+        # ---- Tide flow velocity magnitude and angle ----
+        base = f"{section}_profile{profile_index}_tide_velocity_angle"
+        figfile_velocity_angle = construct_figure_filename(figdir, base, figext)
+        outputfile_velocity_angle = (outputdir / base).with_suffix(".xlsx")
+
+        # Take maximum flow velocity:
+        uc = np.asarray(profile_data_tide["uc"])
+        ucx = np.asarray(profile_data_tide["ucx"])
+        ucy = np.asarray(profile_data_tide["ucy"])
+
+        max_time_indices = np.argmax(uc, axis=1)
+        profile_uc = np.max(uc, axis=1)
+        profile_ucx = np.take_along_axis(
+            ucx, max_time_indices[:, np.newaxis, :], axis=1
+        )[:, 0, :]
+        profile_ucy = np.take_along_axis(
+            ucy, max_time_indices[:, np.newaxis, :], axis=1
+        )[:, 0, :]
+
+
+    # Transverse flow analysis:
     cross_flow.run(
         profile_data["ucx"],
         profile_data["ucy"],
@@ -281,6 +293,18 @@ def save_1d_figures(
         outputfiles,
         bankward_sign,
         tide=tide_inputs,
+    )
+
+    # Flow velocity magnitude and angle:
+    ice.run_1d(
+        profile_uc,
+        profile_ucx,
+        profile_ucy,
+        angles,
+        rkm,
+        configuration,
+        figfile_velocity_angle,
+        outputfile_velocity_angle,
     )
 
 

@@ -97,6 +97,71 @@ def style_1d_axis(ax: Axes, inverse_xaxis_flag: bool = False) -> None:
         color="lightgrey",
     )
 
+def fix_overlapping_ticklabels(ax, axis="y"):
+    if _has_overlapping_ticklabels(ax, axis=axis):
+        _hide_every_other_ticklabel(ax, axis=axis)
+
+def _has_overlapping_ticklabels(ax, axis="y"):
+    ax.figure.canvas.draw()
+
+    labels = (
+        ax.get_xticklabels()
+        if axis == "x"
+        else ax.get_yticklabels()
+    )
+
+    bboxes = [
+        label.get_window_extent()
+        for label in labels
+        if label.get_visible()
+    ]
+
+    return any(
+        b1.overlaps(b2)
+        for b1, b2 in zip(bboxes[:-1], bboxes[1:])
+    )
+
+def _hide_every_other_ticklabel(ax, axis="y"):
+    labels = ax.get_yticklabels() if axis == "y" else ax.get_xticklabels()
+
+    for i, label in enumerate(labels):
+        label.set_visible(i % 2 == 0)
+
+def set_twin_yaxis_limits(primary_axis: Axes, 
+                          secondary_axis: Axes, 
+                          primary_data: np.ndarray, 
+                          secondary_data: np.ndarray,
+                          fraction: int) -> None:
+
+    """
+    Set the y-axis limits of primary and secondary axes based on their respective data and a scaling fraction.
+
+    Parameters
+    ----------
+    primary_axis : Axes
+        The primary y-axis.
+    secondary_axis : Axes
+        The secondary y-axis.
+    primary_data : np.ndarray
+        Data corresponding to the primary y-axis.
+    secondary_data : np.ndarray
+        Data corresponding to the secondary y-axis.
+    fraction : int
+        The fraction used to scale the secondary y-axis limits relative to the primary y-axis.
+
+    Returns
+    -------
+    None
+    """
+    primary_data_max = np.max(np.abs(primary_data))
+    secondary_data_max = np.max(np.abs(secondary_data))
+
+    if secondary_data_max > primary_data_max / fraction:
+        primary_axis.set_ylim(-secondary_data_max * fraction, secondary_data_max * fraction)
+        secondary_axis.set_ylim([y / fraction for y in primary_axis.get_ylim()])
+    else:
+        primary_axis.set_ylim(-primary_data_max, primary_data_max)
+        secondary_axis.set_ylim([y / fraction for y in primary_axis.get_ylim()])
 
 def format_datetime_xaxis(fig: Figure, ax: Axes, x: np.ndarray) -> None:
     """Format a datetime64 x-axis with a concise date locator/formatter.

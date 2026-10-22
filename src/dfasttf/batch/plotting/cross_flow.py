@@ -13,7 +13,6 @@ from dfasttf.batch.plotting.common import (
     add_side_legend,
     difference_plot,
     format_datetime_xaxis,
-    format_datetime_yaxis,
     initialize_figure,
     initialize_subplot,
     make_marker_proxy,
@@ -21,9 +20,12 @@ from dfasttf.batch.plotting.common import (
     plot_variable,
     savefig,
     scatter_idx_points_on_timeseries,
+    set_twin_yaxis_limits,
     style_1d_axis,
+    fix_overlapping_ticklabels,
+    format_datetime_yaxis
 )
-from dfasttf.batch.plotting.configs import CrossFlowConfig, DirectionalMaximaConfig, Plot1DConfig
+from dfasttf.batch.plotting.configs import Plot1DConfig, CrossFlowConfig
 
 
 class CrossFlow:
@@ -41,9 +43,9 @@ class CrossFlow:
         crit_values = crit_values[-1]
 
         for (xi, yi), crit_value in zip(xy_segments, crit_values):
-            ax.fill_between(xi, yi, color="lightgrey", interpolate=True)
+            ax.fill_between(xi, abs(yi), color="lightgrey", interpolate=True)
             crit_handle = ax.hlines(crit_value, xi[0], xi[-1], color="red", lw=1, ls="-")
-            ax.hlines(-crit_value, xi[0], xi[-1], color="red", lw=1, ls="-")
+            #ax.hlines(-crit_value, xi[0], xi[-1], color="red", lw=1, ls="-")
 
         return crit_handle
 
@@ -60,7 +62,8 @@ class CrossFlow:
         plt.close("all")
         fig = initialize_figure()
         ax1 = initialize_subplot(fig, 1, 1, 1, self.config.XLABEL, self.config.YLABEL)
-        ax1.set_ylim(self.config.YLIM)
+        ax1.yaxis.set_major_locator(ticker.MultipleLocator(self.config.YTICKS_MAJOR))
+        ax1.yaxis.set_minor_locator(ticker.MultipleLocator(self.config.YTICKS_MINOR))
 
         crit_handle = self.plot_discharge(ax1, xy_segments, crit_values)
 
@@ -69,13 +72,13 @@ class CrossFlow:
             (line,) = plot_variable(ax1, distance, v, Plot1DConfig.COLORS[i])
             lines.append(line)
 
-        fraction = self.config.FRACTION
+        fraction = Plot1DConfig.FRACTION
         ax2 = None
         diff = None
         if include_difference and len(transverse_velocity) > 1:
-            ax2 = difference_plot(ax1, CrossFlowConfig.DIFF_YLABEL, Plot1DConfig.COLORS[-1])
+            ax2 = difference_plot(ax1, self.config.DIFF_YLABEL, Plot1DConfig.COLORS[-1])
             data = transverse_velocity[1] - transverse_velocity[0]
-            ax2.set_ylim([y / fraction for y in ax1.get_ylim()])
+            set_twin_yaxis_limits(ax1, ax2, transverse_velocity[1], data, fraction)
             (diff,) = plot_variable(ax2, distance, data, color=Plot1DConfig.COLORS[-1])
 
         style_1d_axis(ax1, inverse_xaxis)
@@ -85,17 +88,17 @@ class CrossFlow:
 
         if crit_handle is not None:
             handles.append(crit_handle)
-            labels.append(CrossFlowConfig.CRIT_LABEL)
+            labels.append(self.config.CRIT_LABEL)
 
-        ax1.yaxis.set_major_locator(ticker.MultipleLocator(CrossFlowConfig.YTICKS_MAJOR))
-        ax1.yaxis.set_minor_locator(ticker.MultipleLocator(CrossFlowConfig.YTICKS_MINOR))
+        ax1.yaxis.set_major_locator(ticker.MultipleLocator(self.config.YTICKS_MAJOR))
+        ax1.yaxis.set_minor_locator(ticker.MultipleLocator(self.config.YTICKS_MINOR))
 
         if ax2 is not None and diff is not None:
             ax2.yaxis.set_major_locator(
-                ticker.MultipleLocator(CrossFlowConfig.YTICKS_MAJOR / fraction)
+                ticker.MultipleLocator(self.config.YTICKS_MAJOR / fraction)
             )
             ax2.yaxis.set_minor_locator(
-                ticker.MultipleLocator(CrossFlowConfig.YTICKS_MINOR / fraction)
+                ticker.MultipleLocator(self.config.YTICKS_MINOR / fraction)
             )
             handles.append(diff)
             labels.append(Plot1DConfig.LABELS[-1])
@@ -109,6 +112,13 @@ class CrossFlow:
             borderaxespad=0.0,
         )
         fig.set_figheight(0.5 * FIGWIDTH)
+
+        # Check and fix overlapping tick labels on y-axis:
+        for ax in [ax1, ax2]:
+            if ax is None:
+                continue
+            fix_overlapping_ticklabels(ax, axis="y")
+
         savefig(fig, filename)
 
     def create_figure_tide_velocities(
@@ -118,8 +128,12 @@ class CrossFlow:
         transverse_velocity_flood: list[np.ndarray | None],
         inverse_xaxis: bool,
         filename: Path,
+        include_difference: bool,
         annotation: str | None = None,
     ) -> None:
+        """Creates a figure of the max. transverse velocities during ebb and flood."""
+        fraction = Plot1DConfig.FRACTION
+                
         plt.close("all")
         fig = initialize_figure()
 
@@ -131,22 +145,21 @@ class CrossFlow:
         )
 
         lax = fig.add_subplot(gs[0, 0])   # legend axis
+        lax.axis("off")
         ax1 = fig.add_subplot(gs[1, 0])   # ebb
         ax2 = fig.add_subplot(gs[2, 0])   # flood
 
-        lax.axis("off")
-
-        ax1.set_xlabel(self.config.XLABEL)
-        ax1.set_ylabel(self.config.YLABEL)
-        ax2.set_xlabel(self.config.XLABEL)
-        ax2.set_ylabel(self.config.YLABEL)
-
         ax1.set_title(self.config.EBB_TITLE)
         ax2.set_title(self.config.FLOOD_TITLE)
+        for ax in [ax1, ax2]:
+            ax.yaxis.set_major_locator(
+                ticker.MultipleLocator(self.config.YTICKS_MAJOR)
+            )
+            ax.yaxis.set_minor_locator(
+                ticker.MultipleLocator(self.config.YTICKS_MINOR)
+            )
 
-        ax1.set_ylim(self.config.YLIM)
-        ax2.set_ylim(self.config.YLIM)
-
+        ## Ebb:
         ebb_lines = []
         for i, v in enumerate(transverse_velocity_ebb):
             if v is None:
@@ -154,28 +167,54 @@ class CrossFlow:
             (line,) = plot_variable(ax1, distance, v, Plot1DConfig.COLORS[i])
             ebb_lines.append(line)
 
+        diff_ax = None
+        if include_difference and len(transverse_velocity_ebb) > 1:
+            diff_ax = difference_plot(ax1, self.config.DIFF_YLABEL, Plot1DConfig.COLORS[-1])
+            data = transverse_velocity_ebb[1] - transverse_velocity_ebb[0]
+            set_twin_yaxis_limits(ax1, diff_ax, transverse_velocity_ebb[1], data, fraction)
+            (diff,) = plot_variable(diff_ax, distance, data, color=Plot1DConfig.COLORS[-1])
+            diff_ax.yaxis.set_major_locator(
+                ticker.MultipleLocator(self.config.YTICKS_MAJOR / fraction)
+            )
+            diff_ax.yaxis.set_minor_locator(
+                ticker.MultipleLocator(self.config.YTICKS_MINOR / fraction)
+            )
+
+        ## Flood:
         for i, v in enumerate(transverse_velocity_flood):
             if v is None:
                 continue
             plot_variable(ax2, distance, v, Plot1DConfig.COLORS[i])
 
-        for ax in (ax1, ax2):
-            style_1d_axis(ax, inverse_xaxis)
-            ax.yaxis.set_major_locator(
-                ticker.MultipleLocator(CrossFlowConfig.YTICKS_MAJOR)
+        diff_ax = None
+        if include_difference and len(transverse_velocity_flood) > 1:
+            diff_ax = difference_plot(ax2, self.config.DIFF_YLABEL, Plot1DConfig.COLORS[-1])
+            data = transverse_velocity_flood[1] - transverse_velocity_flood[0]
+            set_twin_yaxis_limits(ax2, diff_ax, transverse_velocity_flood[1], data, fraction)
+            (diff,) = plot_variable(diff_ax, distance, data, color=Plot1DConfig.COLORS[-1])
+            diff_ax.yaxis.set_major_locator(
+                ticker.MultipleLocator(self.config.YTICKS_MAJOR / fraction)
             )
-            ax.yaxis.set_minor_locator(
-                ticker.MultipleLocator(CrossFlowConfig.YTICKS_MINOR)
+            diff_ax.yaxis.set_minor_locator(
+                ticker.MultipleLocator(self.config.YTICKS_MINOR / fraction)
             )
 
+        for ax in (ax1, ax2):
+            ax.set_xlabel(self.config.XLABEL)
+            ax.set_ylabel(self.config.YLABEL)
+            style_1d_axis(ax, inverse_xaxis)
+
         n_present = sum(v is not None for v in transverse_velocity_ebb)
-        labels = Plot1DConfig.LABELS[0:n_present]
-        handles = ebb_lines[:n_present]
-        legend = lax.legend(
+        handles = [*ebb_lines]
+        labels = [*Plot1DConfig.LABELS[0:len(transverse_velocity_ebb)]]
+        if diff_ax is not None:
+            handles.append(diff)
+            labels.append(Plot1DConfig.LABELS[-1])
+        lax.legend(
             handles,
             labels,
             loc="center",
-            ncols=min(3, n_present),
+            ncols=len(handles),
             frameon=True,
             facecolor="white",
             framealpha=1.0,
@@ -194,140 +233,9 @@ class CrossFlow:
             )
 
         fig.set_figheight(0.9 * FIGWIDTH)
+        for ax in [ax1, ax2]:
+            fix_overlapping_ticklabels(ax)
         #fig.subplots_adjust(top=0.7)
-        savefig(fig, filename)
-
-    def create_figure_alongstream_timeseries(
-        self,
-        time: np.ndarray | None,
-        upar_tn: np.ndarray,
-        rkm: np.ndarray,
-        filename: Path,
-        threshold: float | None = None,
-        annotation: str | None = None,
-        idx_ebb: np.ndarray | None = None,
-        idx_flood: np.ndarray | None = None,
-    ) -> None:
-        plt.close("all")
-
-        fig = initialize_figure(figwidth=1.35 * FIGWIDTH)
-        gs = fig.add_gridspec(
-            nrows=2,
-            ncols=2,
-            width_ratios=[20, 1.2],
-            height_ratios=[10, 2],
-        )
-
-        ax = fig.add_subplot(gs[:, 0])
-        cax = fig.add_subplot(gs[0, 1])
-        lax = fig.add_subplot(gs[1, 1])
-
-        if time is None or np.asarray(time).size == 0:
-            x = np.arange(upar_tn.shape[0])
-        else:
-            x = np.asarray(time)
-
-        rk_km, norm, cmap = make_rkm_colormap(rkm)
-
-        nt, n = upar_tn.shape
-        for i in range(n):
-            ax.plot(
-                x,
-                upar_tn[:, i],
-                color=cmap(norm(rk_km[i])),
-                lw=0.4,
-                alpha=0.35,
-            )
-
-        (mean_line,) = ax.plot(
-            x,
-            np.nanmean(upar_tn, axis=1),
-            color="black",
-            lw=1.2,
-            alpha=0.9,
-            label="gemiddelde",
-        )
-
-        thr_handle = None
-        if threshold is not None and np.isfinite(threshold) and threshold > 0:
-            thr_handle = ax.axhline(
-                +threshold,
-                color="red",
-                lw=1.0,
-                ls="--",
-                label=f"drempel ±{threshold:.2f} m/s",
-            )
-            ax.axhline(-threshold, color="red", lw=1.0, ls="--")
-
-        format_datetime_xaxis(fig, ax, x)
-
-        ax.set_xlabel("tijd")
-        ax.set_ylabel("u [m/s]")
-        ax.grid(True, which="major", linestyle="-", alpha=0.6)
-        ax.grid(True, which="minor", linestyle="--", color="lightgrey", alpha=0.6)
-
-        proxies = []
-        legend_labels = []
-
-        if idx_ebb is not None:
-            scatter_idx_points_on_timeseries(
-                ax,
-                x,
-                upar_tn,
-                idx_ebb,
-                rk_km,
-                norm,
-                cmap,
-                marker="o",
-                edgecolor="red",
-                zorder=6,
-            )
-            proxies.append(make_marker_proxy(marker="o", edgecolor="red", markeredgewidth=0.35))
-            legend_labels.append("max ebb (per rkm)")
-
-        if idx_flood is not None:
-            scatter_idx_points_on_timeseries(
-                ax,
-                x,
-                upar_tn,
-                idx_flood,
-                rk_km,
-                norm,
-                cmap,
-                marker="^",
-                edgecolor="red",
-                zorder=7,
-            )
-            proxies.append(make_marker_proxy(marker="^", edgecolor="red", markeredgewidth=0.35))
-            legend_labels.append("max flood (per rkm)")
-
-        sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
-        sm.set_array([])
-        cbar = fig.colorbar(sm, cax=cax, orientation="vertical")
-        cbar.set_label("rkm [km]")
-
-        leg_handles = [mean_line]
-        leg_labels = ["gemiddelde"]
-        if thr_handle is not None:
-            leg_handles.append(thr_handle)
-            leg_labels.append(f"drempel ±{threshold:.2f} m/s")
-        leg_handles.extend(proxies)
-        leg_labels.extend(legend_labels)
-
-        add_side_legend(lax, leg_handles, leg_labels)
-
-        if annotation:
-            fig.text(
-                0.01,
-                0.01,
-                annotation,
-                ha="left",
-                va="bottom",
-                fontsize=9,
-                color="dimgray",
-            )
-
-        fig.set_figheight(0.65 * FIGWIDTH)
         savefig(fig, filename)
 
     def create_figure_tide_max_transverse(
@@ -618,18 +526,14 @@ class CrossFlow:
         self,
         rkm: np.ndarray,
         tv_max_list: list[np.ndarray | None],
-        q_list: list[np.ndarray | None],
         velocity_title: str,
-        discharge_title: str,
         inverse_xaxis: bool,
         filename: Path,
     ) -> None:
         """
         Figure for a single transverse-flow direction (bankward or
         riverward), per profile position along the reference line:
-        1) the maximum transverse velocity in that direction (top row);
-        2) the instantaneous transverse discharge at that same moment
-           (bottom row).
+        the maximum transverse velocity in that direction.
 
         Velocity and discharge are evaluated at the same instant (rather than
         each being independently maximized), matching the RBK review
@@ -642,29 +546,23 @@ class CrossFlow:
         on a shared dual axis.
         """
         plt.close("all")
-        # Wider than the default figure width: each panel here has a
-        # secondary "Verschil" axis (unlike e.g. create_figure_tide_velocities),
-        # which needs extra horizontal room so the primary plot area doesn't
-        # end up narrower than in the other tide figures.
-        fig = initialize_figure(figwidth=1.35 * FIGWIDTH)
-        config = DirectionalMaximaConfig()
-        fraction = CrossFlowConfig.FRACTION
+        fig = initialize_figure()
+        fraction = Plot1DConfig.FRACTION
 
-        ax_v = initialize_subplot(fig, 2, 1, 1, config.XLABEL, config.VELOCITY_YLABEL)
-        ax_q = initialize_subplot(fig, 2, 1, 2, config.XLABEL, config.DISCHARGE_YLABEL)
+        ax_v = initialize_subplot(fig, 2, 1, 1, self.config.XLABEL, self.config.YLABEL)
+        #ax_q = initialize_subplot(fig, 2, 1, 2, self.config.XLABEL, self.config.DISCHARGE_YLABEL)
 
         ax_v.set_title(velocity_title)
-        ax_q.set_title(discharge_title)
+        #ax_q.set_title(discharge_title)
 
         lines, labels = self._plot_directional_scalar_panel(
-            ax_v, rkm, tv_max_list, config.VELOCITY_DIFF_YLABEL, fraction
+            ax_v, rkm, tv_max_list, self.config.DIFF_YLABEL, fraction
         )
-        self._plot_directional_scalar_panel(
-            ax_q, rkm, q_list, config.DISCHARGE_DIFF_YLABEL, fraction
-        )
+        #self._plot_directional_scalar_panel(
+        #    ax_q, rkm, q_list, self.config.DISCHARGE_DIFF_YLABEL, fraction
+        #)
 
-        for ax in (ax_v, ax_q):
-            style_1d_axis(ax, inverse_xaxis)
+        style_1d_axis(ax_v, inverse_xaxis)
 
         # Figure-level legend above both rows, so it doesn't collide with
         # the top row's own title.
@@ -679,8 +577,6 @@ class CrossFlow:
             borderaxespad=0.3,
         )
 
-        # Keep the same absolute height as before; only the width increased,
-        # giving each panel a wider, less cramped (banner-like) aspect ratio
-        # consistent with the other tide figures in this module.
-        fig.set_figheight(0.9 * FIGWIDTH)
+    
+        fix_overlapping_ticklabels(ax_v, axis="y")
         savefig(fig, filename)

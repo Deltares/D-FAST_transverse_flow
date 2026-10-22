@@ -1,10 +1,15 @@
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 from dfasttf.batch import operations, plotting, support
 from dfasttf.config import Config
 from dfasttf.kernel import flow
-from dfasttf.batch import tide as tide_module
+
+if TYPE_CHECKING:
+    from dfasttf.batch import tide as tide_module
 
 def prepare_data_for_excel(xy_block, discharge, crit_value):
     CONVERT_M_TO_KM = 1000
@@ -44,40 +49,34 @@ def run(
 
     rkm_km = rkm / 1000
 
-    # Transverse velocity:
+    ### Velocity calculations ###
     COLUMN_LABELS = ("raai (rkm)", "dwarsstroomsnelheid (m/s)")
     transverse_velocity = []
+    longitudinal_velocity = []
 
     for x, y, wd in zip(ucx, ucy, water_depth):
-        
+        # Transverse flow:
         trans_flow = flow.trans_velocity(x, y, profile_angles)
         trans_flow = flow.orient_transverse_by_bankward_sign(
             trans_flow,
             bankward_sign,
         )
-
-
         repr_trans_flow = flow.repr_trans_velocity(
             wd, trans_flow, path_distances, configuration.ship_params.depth
         )
         transverse_velocity.append(repr_trans_flow)
 
-    data = [
-        transverse_velocity[0],
-        transverse_velocity[1] if len(transverse_velocity) > 1 else None,
-        (
-            (transverse_velocity[1] - transverse_velocity[0])
-            if len(transverse_velocity) > 1
-            else None
-        ),
-    ]
+        # Longitudinal flow:
+        longitudinal_velocity.append(flow.alongstream_velocity(x, y, profile_angles))
+
+    excel_data = support.construct_excel_data(transverse_velocity)
 
     with pd.ExcelWriter(outputfiles[0]) as writer:
-        for label, d in zip(SHEET_LABELS, data):
-            if d is not None:
-                support.to_excel(writer, COLUMN_LABELS, label, rkm_km, d)
+        for label, data in zip(SHEET_LABELS, excel_data):
+            if data is not None:
+                support.to_excel(writer, COLUMN_LABELS, label, rkm_km, data)
 
-    # Transverse discharge:
+    ### Transverse discharge ###
     COLUMN_LABELS = (
         "start (rkm)",
         "eind (rkm)",
@@ -96,54 +95,62 @@ def run(
         CRITERIA,
     )
 
-    data = []
+    excel_data = []
     for i, discharge in enumerate(discharges):
-        data.append(prepare_data_for_excel(xy_blocks[i], discharge, crit_values[i]))
+        excel_data.append(prepare_data_for_excel(xy_blocks[i], discharge, crit_values[i]))
 
     with pd.ExcelWriter(outputfiles[1]) as writer:
-        for label, d in zip(SHEET_LABELS, data):
-            if d is not None:
-                support.to_excel(writer, COLUMN_LABELS, label, *d)
+        for label, data in zip(SHEET_LABELS, excel_data):
+            if data is not None:
+                support.to_excel(writer, COLUMN_LABELS, label, *data)
 
+    ### Plotting ###
     plotter = plotting.CrossFlow()
-    plotter.create_figure(
+
+    # Run tide analysis if Tide=True, else create plots without tide analysis:
+    if configuration.general.bool_flags.get("tide", False):
+        from dfasttf.batch import tide as tide_module
+        tide_module.run_tide_analysis(
+            tide=tide,
+            rkm=rkm,
+            path_distances=path_distances,
+            profile_angles=profile_angles,
+            bankward_sign=bankward_sign,
+            configuration=configuration,
+            outputfiles=outputfiles,
+            transverse_discharge=TransverseDischarge(),
+            plotter=plotter,
+        )
+    else:
+        # Transverse flow:
+        plotter.create_figure(
         rkm,
         transverse_velocity,
         xy_blocks,
         crit_values,
         configuration.general.bool_flags["invertxaxis"],
         figfile,
-    )
+        )
 
-    # ============================================================
-    # TIDE (optional)
-    # ============================================================
+        # Longitudinal flow:
+        plotter = plotting.LongitudinalFlow()
+        figfile = Path(str(figfile).replace("transverse_flow.png", "longitudinal_flow.png"))
+        plotter.create_figure(
+            rkm,
+            longitudinal_velocity,
+            configuration.general.bool_flags["invertxaxis"],
+            figfile,
+        )
     
-    if not configuration.general.bool_flags.get("tide", False):
-        return
-
-    tide_module.append_tide_results(
-        tide=tide,
-        rkm=rkm,
-        path_distances=path_distances,
-        profile_angles=profile_angles,
-        bankward_sign=bankward_sign,
-        configuration=configuration,
-        outputfiles=outputfiles,
-        td=TransverseDischarge(),
-        prepare_data_for_excel=prepare_data_for_excel,
-        plotter=plotter,
-    )
-    
-
 
 class TransverseDischarge:
-    def prepare_data(
+    """Class for computing transverse discharge from transverse velocity."""
+    def _prepare_data(
         self,
         rkm: np.ndarray,
         path_distance: np.ndarray,
         transverse_velocity: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[list[np.ndarray], list[np.ndarray] | None, list[np.ndarray]]:
         """Prepare data by densifying, inserting array roots and subsequently splitting into blocks."""
         # because ship length is 0.5 m precision we first densify distance such that diff(distance) <= 0.5 m:
 
@@ -175,14 +182,14 @@ class TransverseDischarge:
         ship_depth: float,
         ship_length: float,
         criteria: tuple[float, float],
-    ):
+    ) -> tuple[list[np.ndarray], list[np.ndarray], list[np.ndarray]]:
         """Computes the transverse discharge from transverse velocity, ship depth and ship length"""
         discharges = []
         crit_values = []
         xy_segments = []
 
         for tv in transverse_velocity:
-            rkm_split, path_distances_split, tv_split = self.prepare_data(
+            rkm_split, path_distances_split, tv_split = self._prepare_data(
                 rkm, path_distances, tv
             )
             discharge_case = []

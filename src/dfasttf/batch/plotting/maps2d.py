@@ -138,7 +138,6 @@ class Ice2D:
             dry_ref_mask,
             wet_variant_mask,
         )
-        variant_data.values = classes
 
         fig, ax = Plot2D().initialize_map()
         p = ref_data.ugrid.plot(
@@ -167,13 +166,16 @@ class Ice2D:
         #     vmax=bins[1],
         # )
 
-        ax, legend_elements = self._plot_diff_map(ax, variant_data, labels, colors)
+        diff_data = variant_data.copy(deep=True)
+        diff_data.values = classes
+        ax, legend_elements = self._plot_diff_map(ax, diff_data, labels, colors)
 
         ax = Plot2D().modify_axes(ax)
         lgd = ax.legend(legend_elements,
                         labels,
                         loc='lower center',
-                        bbox_to_anchor=(0.5,1)
+                        bbox_to_anchor=(0.5,1),
+                        ncol=2
         )
         lgd.set_title(FroudeConfig.legend_title)
         ax.grid(True)
@@ -215,7 +217,8 @@ class Ice2D:
         conditions = [
             (ref_data < 1) & (variant_data >= 1),
             (ref_data > 0) & (variant_data <= 0),
-            dry_ref_mask & wet_variant_mask
+            dry_ref_mask & wet_variant_mask,
+            ~dry_ref_mask & ~wet_variant_mask
         ]
         for i, cond in enumerate(conditions, start=1):
             classes[cond] = i

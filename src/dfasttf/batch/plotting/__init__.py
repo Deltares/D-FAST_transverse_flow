@@ -40,12 +40,15 @@ from dfasttf.batch.plotting.common import (
 )
 from dfasttf.batch.plotting.configs import (
     CrossFlowConfig,
-    DirectionalMaximaConfig,
+    TideCrossFlowConfig,
+    LongitudinalFlowConfig,
+    TideLongitudinalFlowConfig,
     FlowfieldConfig,
     FroudeConfig,
     Plot1DConfig,
 )
 from dfasttf.batch.plotting.cross_flow import CrossFlow
+from dfasttf.batch.plotting.longitudinal_flow import LongitudinalFlow
 from dfasttf.batch.plotting.ice1d import Ice1D
 from dfasttf.batch.plotting.maps2d import Ice2D, Plot2D
 
@@ -61,12 +64,15 @@ __all__ = [
     "CrossFlow",
     "CrossFlowConfig",
     "difference_plot",
-    "DirectionalMaximaConfig",
+    "TideCrossFlowConfig",
+    "LongitudinalFlowConfig",
+    "TideLongitudinalFlowConfig",
     "FlowfieldConfig",
     "format_datetime_xaxis",
     "format_datetime_yaxis",
     "FroudeConfig",
     "Ice1D",
+    "LongitudinalFlow",
     "Ice2D",
     "initialize_figure",
     "initialize_subplot",
