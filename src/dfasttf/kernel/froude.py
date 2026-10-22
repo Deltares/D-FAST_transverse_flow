@@ -3,7 +3,6 @@
 import numpy as np
 from xarray import DataArray
 
-
 def calculate_froude_number(
     water_depth: DataArray, flow_velocity: DataArray, grav_constant=9.81
 ) -> DataArray:

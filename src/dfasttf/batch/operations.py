@@ -1,6 +1,6 @@
 import math
-
 import numpy as np
+from collections import OrderedDict
 
 # def append_array_roots(x: np.ndarray, y: np.ndarray) -> tuple:
 #     """
@@ -214,3 +214,43 @@ def densify_array(x: np.ndarray, max_step: float) -> np.ndarray:
 
     x_new = np.concatenate(parts)
     return x_new
+
+def sort_a_by_b(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Sorts the array `a` by the argsort of `b`.
+
+    Parameters
+    ----------
+    `a` (np.ndarray): Array to be sorted.
+    `b` (np.ndarray): Array to sort by.
+
+    Returns
+    ----------
+    np.ndarray: sorted array `a`.
+    """
+    sort_idx = np.argsort(b)
+    return (
+        np.take_along_axis(a, sort_idx[:, np.newaxis], axis=0)
+        if a.ndim > 1
+        else a[sort_idx]
+    )
+
+def group_duplicates(array: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Groups duplicates in an `array`, preserving insertion order of first occurrences.
+    
+    Parameters
+    ---------- 
+    `array` (np.ndarray): array from which to group duplicates.
+    
+    Returns
+    ----------
+    `grouped_array` (np.ndarray).
+    `group_indices` (np.ndarray): corresponding indices in the original array."""
+    groups = OrderedDict()
+    for idx, val in enumerate(array):
+        if val not in groups:
+            groups[val] = []
+        groups[val].append(idx)
+
+    group_indices = np.array([idx for indices in groups.values() for idx in indices])
+    grouped_array = array[group_indices]
+    return grouped_array, group_indices

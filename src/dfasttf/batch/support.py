@@ -30,3 +30,9 @@ def to_excel(
     df.to_excel(
         writer, sheet_name=sheet_name, header=True, index=False, float_format="%.3f"
     )
+
+def construct_excel_data(data: list[np.ndarray]) -> list[np.ndarray, np.ndarray | None, np.ndarray | None]:
+    ref_data = data[0]
+    intervention_data = data[1] if len(data) > 1 else None
+    diff_data = (data[1] - data[0]) if len(data) > 1 else None
+    return [ref_data, intervention_data, diff_data]
